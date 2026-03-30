@@ -44,7 +44,7 @@ def fast_collate_cpu(batch, attr_name):
 
 def send_to_gpu(batch, attr_name):
     return torch.as_tensor(batch).to(
-        non_blocking=True, device="cuda", memory_format=torch.channels_last if "img" in attr_name else torch.preserve_format
+        non_blocking=True, device="cpu", memory_format=torch.channels_last if "img" in attr_name else torch.preserve_format
     )
 
 

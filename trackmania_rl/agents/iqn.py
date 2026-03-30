@@ -71,8 +71,8 @@ class IQN_Network(torch.nn.Module):
         self.n_actions = n_actions
 
         # States are not normalized when the method forward() is called. Normalization is done as the first step of the forward() method.
-        self.float_inputs_mean = torch.tensor(float_inputs_mean, dtype=torch.float32).to("cuda")
-        self.float_inputs_std = torch.tensor(float_inputs_std, dtype=torch.float32).to("cuda")
+        self.float_inputs_mean = torch.tensor(float_inputs_mean, dtype=torch.float32).to("cpu")
+        self.float_inputs_std = torch.tensor(float_inputs_std, dtype=torch.float32).to("cpu")
 
     def initialize_weights(self):
         lrelu_neg_slope = 1e-2
@@ -122,12 +122,12 @@ class IQN_Network(torch.nn.Module):
         concat = torch.cat((img_outputs, float_outputs), 1)  # (batch_size, dense_input_dimension)
         if tau is None:
             tau = (
-                torch.arange(num_quantiles // 2, device="cuda", dtype=torch.float32).repeat_interleave(batch_size).unsqueeze(1)
-                + torch.rand(size=(batch_size * num_quantiles // 2, 1), device="cuda", dtype=torch.float32)
+                torch.arange(num_quantiles // 2, device="cpu", dtype=torch.float32).repeat_interleave(batch_size).unsqueeze(1)
+                + torch.rand(size=(batch_size * num_quantiles // 2, 1), device="cpu", dtype=torch.float32)
             ) / num_quantiles  # (batch_size * num_quantiles // 2, 1) (random numbers)
             tau = torch.cat((tau, 1 - tau), dim=0)  # ensure that tau are sampled symmetrically
         quantile_net = torch.cos(
-            torch.arange(1, self.iqn_embedding_dimension + 1, 1, device="cuda") * math.pi * tau
+            torch.arange(1, self.iqn_embedding_dimension + 1, 1, device="cpu") * math.pi * tau
         )  # (batch_size*num_quantiles, 1)
         quantile_net = quantile_net.expand(
             [-1, self.iqn_embedding_dimension]
@@ -381,10 +381,10 @@ class Inferer:
             state_img_tensor = (
                 torch.from_numpy(img_inputs_uint8)
                 .unsqueeze(0)
-                .to("cuda", memory_format=torch.channels_last, non_blocking=True, dtype=torch.float32)
+                .to("cpu", memory_format=torch.channels_last, non_blocking=True, dtype=torch.float32)
                 - 128
             ) / 128
-            state_float_tensor = torch.from_numpy(np.expand_dims(float_inputs, axis=0)).to("cuda", non_blocking=True)
+            state_float_tensor = torch.from_numpy(np.expand_dims(float_inputs, axis=0)).to("cpu", non_blocking=True)
             q_values = (
                 self.inference_network(
                     state_img_tensor,
@@ -467,6 +467,6 @@ def make_untrained_iqn_network(jit: bool, is_inference: bool) -> Tuple[IQN_Netwo
     else:
         model = copy.deepcopy(uncompiled_model)
     return (
-        model.to(device="cuda", memory_format=torch.channels_last).train(),
-        uncompiled_model.to(device="cuda", memory_format=torch.channels_last).train(),
+        model.to(device="cpu", memory_format=torch.channels_last).train(),
+        uncompiled_model.to(device="cpu", memory_format=torch.channels_last).train(),
     )

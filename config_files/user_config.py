@@ -9,7 +9,7 @@ from sys import platform
 
 is_linux = platform in ["linux", "linux2"]
 
-username = "tmnf_account_username"  # Username of the TMNF account
+username = "ibra#54321"  # Username of the TMNF account
 
 # Path where Python_Link.as should be placed so that it can be loaded in TMInterface.
 # Usually Path(os.path.expanduser("~")) / "Documents" / "TMInterface" / "Plugins" / "Python_Link.as"
