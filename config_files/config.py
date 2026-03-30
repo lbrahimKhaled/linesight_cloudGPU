@@ -168,12 +168,10 @@ use_jit = False
 # gpu_collectors_count is the number of Trackmania instances that will be launched in parallel.
 # It is recommended that users adjust this number depending on the performance of their machine.
 # We recommend trying different values and finding the one that maximises the number of batches done per unit of time.
-# For distributed setups with limited RAM (8GB), keep this at 1 to avoid CPU/memory contention.
 gpu_collectors_count = 1
 
-send_shared_network_every_n_batches = 50  # Increased from 10 to reduce CPU load from weight serialization on remote collector
-update_inference_network_every_n_actions = 50  # Increased from 20 to reduce CPU load on collector
-pull_weights_every_n_rollouts = 5  # How often remote collector pulls weights from learner. Higher = less CPU load on collector
+send_shared_network_every_n_batches = 10
+update_inference_network_every_n_actions = 20
 
 target_self_loss_clamp_ratio = 4
 
