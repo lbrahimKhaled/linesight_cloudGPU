@@ -117,73 +117,77 @@ def collector_process_fn(
     # game_instance_manager.update_current_zone_idx(0, zone_centers, np.zeros(3))
 
     time_since_last_queue_push = time.perf_counter()
-    for loop_number in count(1):
-        importlib.reload(config_copy)
+    try:
+        for loop_number in count(1):
+            importlib.reload(config_copy)
 
-        tmi.max_minirace_duration_ms = config_copy.cutoff_rollout_if_no_vcp_passed_within_duration_ms
+            tmi.max_minirace_duration_ms = config_copy.cutoff_rollout_if_no_vcp_passed_within_duration_ms
 
-        # ===============================================
-        #   DID THE CYCLE CHANGE ?
-        # ===============================================
-        if str(config_copy.map_cycle) != map_cycle_str:
-            map_cycle_str = str(config_copy.map_cycle)
-            set_maps_trained, set_maps_blind = analyze_map_cycle(config_copy.map_cycle)
-            map_cycle_iter = cycle(chain(*config_copy.map_cycle))
+            # ===============================================
+            #   DID THE CYCLE CHANGE ?
+            # ===============================================
+            if str(config_copy.map_cycle) != map_cycle_str:
+                map_cycle_str = str(config_copy.map_cycle)
+                set_maps_trained, set_maps_blind = analyze_map_cycle(config_copy.map_cycle)
+                map_cycle_iter = cycle(chain(*config_copy.map_cycle))
 
-        # ===============================================
-        #   GET NEXT MAP FROM CYCLE
-        # ===============================================
-        next_map_tuple = next(map_cycle_iter)
-        if next_map_tuple[2] != zone_centers_filename:
-            zone_centers = load_next_map_zone_centers(next_map_tuple[2], base_dir)
-        map_name, map_path, zone_centers_filename, is_explo, fill_buffer = next_map_tuple
-        map_status = "trained" if map_name in set_maps_trained else "blind"
+            # ===============================================
+            #   GET NEXT MAP FROM CYCLE
+            # ===============================================
+            next_map_tuple = next(map_cycle_iter)
+            if next_map_tuple[2] != zone_centers_filename:
+                zone_centers = load_next_map_zone_centers(next_map_tuple[2], base_dir)
+            map_name, map_path, zone_centers_filename, is_explo, fill_buffer = next_map_tuple
+            map_status = "trained" if map_name in set_maps_trained else "blind"
 
-        inferer.epsilon = utilities.from_exponential_schedule(config_copy.epsilon_schedule, shared_steps.value)
-        inferer.epsilon_boltzmann = utilities.from_exponential_schedule(config_copy.epsilon_boltzmann_schedule, shared_steps.value)
-        inferer.tau_epsilon_boltzmann = config_copy.tau_epsilon_boltzmann
-        inferer.is_explo = is_explo
+            inferer.epsilon = utilities.from_exponential_schedule(config_copy.epsilon_schedule, shared_steps.value)
+            inferer.epsilon_boltzmann = utilities.from_exponential_schedule(config_copy.epsilon_boltzmann_schedule, shared_steps.value)
+            inferer.tau_epsilon_boltzmann = config_copy.tau_epsilon_boltzmann
+            inferer.is_explo = is_explo
 
-        # ===============================================
-        #   PLAY ONE ROUND
-        # ===============================================
+            # ===============================================
+            #   PLAY ONE ROUND
+            # ===============================================
 
-        rollout_start_time = time.perf_counter()
+            rollout_start_time = time.perf_counter()
 
-        if inference_network.training and not is_explo:
-            inference_network.eval()
-        elif is_explo and not inference_network.training:
-            inference_network.train()
+            if inference_network.training and not is_explo:
+                inference_network.eval()
+            elif is_explo and not inference_network.training:
+                inference_network.train()
 
-        update_network()
+            update_network()
 
-        rollout_start_time = time.perf_counter()
-        rollout_results, end_race_stats = tmi.rollout(
-            exploration_policy=inferer.get_exploration_action,
-            map_path=map_path,
-            zone_centers=zone_centers,
-            update_network=update_network,
-        )
-        rollout_end_time = time.perf_counter()
-        rollout_duration = rollout_end_time - rollout_start_time
-        rollout_results["worker_time_in_rollout_percentage"] = rollout_duration / (time.perf_counter() - time_since_last_queue_push)
-        time_since_last_queue_push = time.perf_counter()
-        print("", flush=True)
-
-        if not tmi.last_rollout_crashed:
-            payload = (
-                rollout_results,
-                end_race_stats,
-                fill_buffer,
-                is_explo,
-                map_name,
-                map_status,
-                rollout_duration,
-                loop_number,
+            rollout_start_time = time.perf_counter()
+            rollout_results, end_race_stats = tmi.rollout(
+                exploration_policy=inferer.get_exploration_action,
+                map_path=map_path,
+                zone_centers=zone_centers,
+                update_network=update_network,
             )
-            if remote_session is not None:
-                remote_session.submit_rollout(payload)
-            else:
-                rollout_queue.put(
-                    payload
+            rollout_end_time = time.perf_counter()
+            rollout_duration = rollout_end_time - rollout_start_time
+            rollout_results["worker_time_in_rollout_percentage"] = rollout_duration / (time.perf_counter() - time_since_last_queue_push)
+            time_since_last_queue_push = time.perf_counter()
+            print("", flush=True)
+
+            if not tmi.last_rollout_crashed:
+                payload = (
+                    rollout_results,
+                    end_race_stats,
+                    fill_buffer,
+                    is_explo,
+                    map_name,
+                    map_status,
+                    rollout_duration,
+                    loop_number,
                 )
+                if remote_session is not None:
+                    remote_session.submit_rollout(payload)
+                else:
+                    rollout_queue.put(
+                        payload
+                    )
+    finally:
+        if remote_session is not None:
+            remote_session.close()

@@ -11,6 +11,7 @@ import socket
 import struct
 import threading
 import time
+import zlib
 from collections import deque
 from typing import Any
 
@@ -19,7 +20,11 @@ import torch
 
 from trackmania_rl.device import state_dict_to_cpu
 
-_HEADER = struct.Struct("!Q")
+_HEADER = struct.Struct("!BQ")
+_MESSAGE_FLAG_COMPRESSED = 1
+_MESSAGE_COMPRESSION_LEVEL = 1
+_MESSAGE_COMPRESSION_THRESHOLD_BYTES = 256 * 1024
+_WEIGHTS_PULL_INTERVAL_S = 0.25
 
 
 def _recv_exact(sock: socket.socket, length: int) -> bytes:
@@ -36,13 +41,22 @@ def _recv_exact(sock: socket.socket, length: int) -> bytes:
 
 def _send_message(sock: socket.socket, payload: Any):
     data = pickle.dumps(payload, protocol=pickle.HIGHEST_PROTOCOL)
-    sock.sendall(_HEADER.pack(len(data)))
+    flags = 0
+    if len(data) >= _MESSAGE_COMPRESSION_THRESHOLD_BYTES:
+        compressed_data = zlib.compress(data, level=_MESSAGE_COMPRESSION_LEVEL)
+        if len(compressed_data) < len(data):
+            data = compressed_data
+            flags |= _MESSAGE_FLAG_COMPRESSED
+    sock.sendall(_HEADER.pack(flags, len(data)))
     sock.sendall(data)
 
 
 def _recv_message(sock: socket.socket):
-    message_length = _HEADER.unpack(_recv_exact(sock, _HEADER.size))[0]
-    return pickle.loads(_recv_exact(sock, message_length))
+    flags, message_length = _HEADER.unpack(_recv_exact(sock, _HEADER.size))
+    payload = _recv_exact(sock, message_length)
+    if flags & _MESSAGE_FLAG_COMPRESSED:
+        payload = zlib.decompress(payload)
+    return pickle.loads(payload)
 
 
 def _serialize_state_dict(state_dict: dict) -> bytes:
@@ -303,14 +317,23 @@ class RemoteCollectorSession:
         self._submit_sock = None
         self._next_rollout_id = 0
         self._last_shared_steps = 0
+        self._latest_weights_version = -1
+        self._latest_state_dict = None
         self._submit_queue = queue.Queue(maxsize=2)
         self._stop_event = threading.Event()
+        self._weights_condition = threading.Condition()
         self._submit_thread = threading.Thread(
             target=self._submit_loop,
             name=f"remote-rollout-submit-{collector_name}",
             daemon=True,
         )
+        self._weights_thread = threading.Thread(
+            target=self._weights_loop,
+            name=f"remote-weights-pull-{collector_name}",
+            daemon=True,
+        )
         self._submit_thread.start()
+        self._weights_thread.start()
 
     def close(self):
         self._stop_event.set()
@@ -320,6 +343,8 @@ class RemoteCollectorSession:
             pass
         self._close_socket("control")
         self._close_socket("submit")
+        with self._weights_condition:
+            self._weights_condition.notify_all()
 
     def _close_socket(self, channel: str):
         socket_name = "sock" if channel == "control" else "_submit_sock"
@@ -333,24 +358,25 @@ class RemoteCollectorSession:
 
     def wait_for_initial_weights(self):
         while True:
-            weights_version, state_dict, shared_steps = self.pull_weights(-1, max_attempts=None)
-            if state_dict is not None:
-                return weights_version, state_dict, shared_steps
-            time.sleep(1)
+            with self._weights_condition:
+                if self._latest_state_dict is not None:
+                    state_dict = self._latest_state_dict
+                    self._latest_state_dict = None
+                    return self._latest_weights_version, state_dict, self._last_shared_steps
+                if self._stop_event.is_set():
+                    raise RuntimeError("Remote collector session stopped before initial weights arrived.")
+                self._weights_condition.wait(timeout=1)
 
     def pull_weights(self, known_version: int, max_attempts: int | None = 2):
-        response = self._request(
-            {"type": "pull_weights", "known_version": known_version},
-            max_attempts=max_attempts,
-        )
-        if not response["ready"]:
-            self._last_shared_steps = response["shared_steps"]
-            return response["weights_version"], None, response["shared_steps"]
-        state_dict = None
-        if "state_dict" in response:
-            state_dict = _deserialize_state_dict(response["state_dict"])
-        self._last_shared_steps = response["shared_steps"]
-        return response["weights_version"], state_dict, response["shared_steps"]
+        del max_attempts
+        with self._weights_condition:
+            latest_version = max(known_version, self._latest_weights_version)
+            if self._latest_state_dict is None or self._latest_weights_version <= known_version:
+                return latest_version, None, self._last_shared_steps
+
+            state_dict = self._latest_state_dict
+            self._latest_state_dict = None
+            return self._latest_weights_version, state_dict, self._last_shared_steps
 
     def submit_rollout(self, payload):
         rollout_id = f"{self.collector_name}:{self._next_rollout_id}"
@@ -414,3 +440,30 @@ class RemoteCollectorSession:
                 max_attempts=None,
                 channel="submit",
             )
+
+    def _weights_loop(self):
+        known_version = -1
+        while not self._stop_event.is_set():
+            response = self._request(
+                {"type": "pull_weights", "known_version": known_version},
+                max_attempts=None,
+                channel="control",
+            )
+
+            state_dict = None
+            response_version = response["weights_version"]
+            if response.get("ready") and "state_dict" in response:
+                state_dict = _deserialize_state_dict(response["state_dict"])
+                known_version = response_version
+            elif response_version > known_version:
+                known_version = response_version
+
+            with self._weights_condition:
+                self._last_shared_steps = response["shared_steps"]
+                if state_dict is not None and response_version >= self._latest_weights_version:
+                    self._latest_weights_version = response_version
+                    self._latest_state_dict = state_dict
+                self._weights_condition.notify_all()
+
+            if self._stop_event.wait(_WEIGHTS_PULL_INTERVAL_S):
+                return
