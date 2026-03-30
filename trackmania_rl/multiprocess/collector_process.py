@@ -64,23 +64,32 @@ def collector_process_fn(
     )
 
     inferer = iqn.Inferer(inference_network, config_copy.iqn_k, config_copy.tau_epsilon_boltzmann)
+    pending_state_dict = None
+    pending_weights_version = -1
 
     def load_state_dict_into_inference_models(state_dict):
         inference_network.load_state_dict(state_dict)
         uncompiled_inference_network.load_state_dict(state_dict)
 
-    def update_network():
+    def update_network(apply_pending: bool, should_pull: bool = True):
         # Update weights of the inference network
         nonlocal current_weights_version
+        nonlocal pending_state_dict
+        nonlocal pending_weights_version
         if remote_session is not None:
-            try:
-                weights_version, state_dict, remote_shared_steps = remote_session.pull_weights(current_weights_version)
-            except (EOFError, OSError):
-                return
-            shared_steps.value = remote_shared_steps
-            if state_dict is not None:
-                load_state_dict_into_inference_models(state_dict)
-                current_weights_version = weights_version
+            if should_pull:
+                try:
+                    weights_version, state_dict, remote_shared_steps = remote_session.pull_weights(current_weights_version)
+                except (EOFError, OSError):
+                    return
+                shared_steps.value = remote_shared_steps
+                if state_dict is not None:
+                    pending_state_dict = state_dict
+                    pending_weights_version = weights_version
+            if apply_pending and pending_state_dict is not None:
+                load_state_dict_into_inference_models(pending_state_dict)
+                current_weights_version = pending_weights_version
+                pending_state_dict = None
         else:
             with shared_network_lock:
                 load_state_dict_into_inference_models(uncompiled_shared_network.state_dict())
@@ -121,6 +130,9 @@ def collector_process_fn(
         for loop_number in count(1):
             importlib.reload(config_copy)
 
+            # Pull weights from remote learner only every N rollouts to reduce CPU load
+            should_pull_weights = (loop_number == 1) or (loop_number % config_copy.pull_weights_every_n_rollouts == 0)
+
             tmi.max_minirace_duration_ms = config_copy.cutoff_rollout_if_no_vcp_passed_within_duration_ms
 
             # ===============================================
@@ -156,14 +168,14 @@ def collector_process_fn(
             elif is_explo and not inference_network.training:
                 inference_network.train()
 
-            update_network()
+            update_network(apply_pending=True, should_pull=should_pull_weights)
 
             rollout_start_time = time.perf_counter()
             rollout_results, end_race_stats = tmi.rollout(
                 exploration_policy=inferer.get_exploration_action,
                 map_path=map_path,
                 zone_centers=zone_centers,
-                update_network=update_network,
+                update_network=lambda: update_network(apply_pending=False, should_pull=False),
             )
             rollout_end_time = time.perf_counter()
             rollout_duration = rollout_end_time - rollout_start_time

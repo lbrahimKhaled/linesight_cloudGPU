@@ -39,10 +39,10 @@ def _recv_exact(sock: socket.socket, length: int) -> bytes:
     return buffer
 
 
-def _send_message(sock: socket.socket, payload: Any):
+def _send_message(sock: socket.socket, payload: Any, compress: bool = True):
     data = pickle.dumps(payload, protocol=pickle.HIGHEST_PROTOCOL)
     flags = 0
-    if len(data) >= _MESSAGE_COMPRESSION_THRESHOLD_BYTES:
+    if compress and len(data) >= _MESSAGE_COMPRESSION_THRESHOLD_BYTES:
         compressed_data = zlib.compress(data, level=_MESSAGE_COMPRESSION_LEVEL)
         if len(compressed_data) < len(data):
             data = compressed_data
@@ -269,7 +269,7 @@ class RemoteLearnerHub:
                             }
                             if known_version != self._weights_version:
                                 response["state_dict"] = self._weights_payload
-                    _send_message(conn, response)
+                    _send_message(conn, response, compress="state_dict" in response)
                 elif request_type == "submit_rollout":
                     rollout_id = request.get("rollout_id")
                     should_enqueue = True
@@ -284,9 +284,9 @@ class RemoteLearnerHub:
                                     self._seen_rollout_ids.discard(oldest_rollout_id)
                     if should_enqueue:
                         self.rollout_queue.put(_unpack_rollout_payload(request["payload"]))
-                    _send_message(conn, {"ok": True})
+                    _send_message(conn, {"ok": True}, compress=False)
                 else:
-                    _send_message(conn, {"ok": False, "error": f"Unsupported request: {request_type}"})
+                    _send_message(conn, {"ok": False, "error": f"Unsupported request: {request_type}"}, compress=False)
                     return
         except (EOFError, OSError):
             return
@@ -408,13 +408,14 @@ class RemoteCollectorSession:
     def _request(self, payload, max_attempts: int | None = 2, channel: str = "control"):
         attempts = 0
         socket_name = "sock" if channel == "control" else "_submit_sock"
+        compress_payload = channel != "submit"
         while True:
             attempts += 1
             try:
                 if getattr(self, socket_name) is None:
                     self._connect(channel)
                 current_sock = getattr(self, socket_name)
-                _send_message(current_sock, payload)
+                _send_message(current_sock, payload, compress=compress_payload)
                 response = _recv_message(current_sock)
                 if not response.get("ok", False):
                     raise RuntimeError(response.get("error", "Unknown remote learner error"))

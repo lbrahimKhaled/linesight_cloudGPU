@@ -20,11 +20,14 @@ from torchrl.data.replay_buffers.utils import INT_CLASSES, _to_numpy
 from config_files import config_copy
 
 to_torch_dtype = {
+    np.bool_: torch.bool,
     np.uint8: torch.uint8,
     np.float32: torch.float32,
+    np.int32: torch.int32,
     np.int64: torch.int64,
     float: torch.float32,
     int: torch.int,
+    bool: torch.bool,
     np.float64: torch.float32,
 }
 
@@ -33,7 +36,8 @@ def fast_collate_cpu(batch, attr_name):
     elem = getattr(batch[0], attr_name)
     elem_array = hasattr(elem, "__len__")
     shape = (len(batch),) + (elem.shape if elem_array else ())
-    data_type = type(elem.flat[0] if elem_array else elem)
+    scalar_example = elem.flat[0] if elem_array else elem
+    data_type = getattr(getattr(scalar_example, "dtype", None), "type", type(scalar_example))
     data_type = to_torch_dtype[data_type]
     buffer = torch.empty(size=shape, dtype=data_type, pin_memory=False).numpy()
     attr_getter = attrgetter(attr_name)
