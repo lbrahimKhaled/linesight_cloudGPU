@@ -16,6 +16,7 @@ from PIL import Image
 
 from config_files import config_copy
 from trackmania_rl.agents.iqn import iqn_loss
+from trackmania_rl.device import make_autocast_context
 
 
 def batched(iterable, n):  # Can be included from itertools with python >=3.12
@@ -29,6 +30,7 @@ def batched(iterable, n):  # Can be included from itertools with python >=3.12
 
 
 def race_time_left_curves(rollout_results, inferer, save_dir, map_name):
+    learner_device = inferer.device
     color_cycle = [
         "red",
         "forestgreen",
@@ -63,7 +65,7 @@ def race_time_left_curves(rollout_results, inferer, save_dir, map_name):
             q_h = defaultdict(list)
             a_h = defaultdict(list)
 
-            tau = torch.linspace(0.05, 0.95, config_copy.iqn_k)[:, None].to("cuda")
+            tau = torch.linspace(0.05, 0.95, config_copy.iqn_k, device=learner_device)[:, None]
             for j in x_axis:
                 # print(j)
                 rollout_results_copy["state_float"][frame_number][0] = j
@@ -109,7 +111,7 @@ def tau_curves(rollout_results, inferer, save_dir, map_name):
 
     rollout_results_copy = rollout_results.copy()
 
-    tau = torch.linspace(0.05, 0.95, config_copy.iqn_k)[:, None].to("cuda")
+    tau = torch.linspace(0.05, 0.95, config_copy.iqn_k, device=inferer.device)[:, None]
 
     n_best_actions_to_plot = 12
 
@@ -145,7 +147,7 @@ def patrick_curves(rollout_results, inferer, save_dir, map_name):
 
     rollout_results_copy = rollout_results.copy()
 
-    tau = torch.linspace(0.05, 0.95, config_copy.iqn_k)[:, None].to("cuda")
+    tau = torch.linspace(0.05, 0.95, config_copy.iqn_k, device=inferer.device)[:, None]
 
     horizons_to_plot = [140, 120, 100, 80, 60, 40, 20, 10]
 
@@ -202,6 +204,7 @@ def highest_prio_transitions(buffer, save_dir):
 
 
 def get_output_and_target_for_batch(batch, online_network, target_network, num_quantiles):
+    learner_device = next(online_network.parameters()).device
     (
         state_img_tensor,
         state_float_tensor,
@@ -219,8 +222,8 @@ def get_output_and_target_for_batch(batch, online_network, target_network, num_q
     state_float_tensor[:, 0] = (0 - config_copy.float_inputs_mean[0]) / config_copy.float_inputs_std[0]
     next_state_float_tensor[:, 0] = state_float_tensor[:, 0] + delta
 
-    tau = torch.linspace(0, 1, num_quantiles, device="cuda").repeat_interleave(batch_size).unsqueeze(1)
-    with torch.amp.autocast(device_type="cuda", dtype=torch.float16):
+    tau = torch.linspace(0, 1, num_quantiles, device=learner_device).repeat_interleave(batch_size).unsqueeze(1)
+    with make_autocast_context(learner_device):
         with torch.no_grad():
             rewards = rewards.unsqueeze(-1).repeat(
                 [num_quantiles, 1]

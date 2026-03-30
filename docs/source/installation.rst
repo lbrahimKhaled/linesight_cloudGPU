@@ -7,11 +7,15 @@ Prerequisites
 
 Linesight requires:
     - Python >=3.10 and <3.12
-    - PyTorch >=2.1 with CUDA (check the `official website <https://pytorch.org/get-started/locally/>`_ for specific instructions)
+    - PyTorch >=2.1 with a backend supported by your learner machine (check the `official website <https://pytorch.org/get-started/locally/>`_ for specific instructions)
     - 20 GB RAM
     - `Trackmania Nations Forever <https://store.steampowered.com/app/11020/TrackMania_Nations_Forever/>`_ with `ModLoader <https://tomashu.dev/software/tmloader/>`_ and `TMInterface 2.1.0 <https://www.donadigo.com/tminterface/>`_.
 
-This project is compatible with Windows and Linux. The authors use Nvidia GPUs, but user reports indicate that the project is also compatible with AMD GPUs.
+For the standard all-in-one setup, the project targets Windows and Linux machines that can both run TrackMania and train the learner locally.
+
+For the distributed split setup documented in :doc:`distributed_split`, the learner can also run on an Apple Silicon Mac through PyTorch's ``mps`` backend while TrackMania stays on a separate Windows machine.
+
+The authors use Nvidia GPUs for local learner training, but the learner path is not limited to CUDA anymore.
 
 Python project setup
 --------------------
@@ -44,6 +48,9 @@ In all other cases, use the following commands to set the project in your chosen
     git clone https://github.com/pb4git/linesight && cd linesight
     pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121 # from pytorch website
     pip install -e .
+
+.. note::
+    If the learner machine is an Apple Silicon Mac used only for the distributed split setup, install PyTorch for macOS with the selector on the `official website <https://pytorch.org/get-started/locally/>`_, then run ``pip install -e .`` and follow :doc:`distributed_split`.
 
 
 Linux-specific instructions

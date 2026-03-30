@@ -36,4 +36,4 @@ config_files/config_copy.py
 /scripts/nogit/
 /config_files/user_config_pb_linux.py
 pixi.lock
-
+.venv

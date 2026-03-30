@@ -1,0 +1,249 @@
+
+
+<!DOCTYPE html>
+<html class="writer-html5" lang="en" data-content_root="./">
+<head>
+  <meta charset="utf-8" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Distributed Split Deploy &mdash; Linesight 3.0.1 documentation</title>
+      <link rel="stylesheet" type="text/css" href="_static/pygments.css?v=b86133f3" />
+      <link rel="stylesheet" type="text/css" href="_static/css/theme.css?v=9edc463e" />
+
+  
+      <script src="_static/jquery.js?v=5d32c60e"></script>
+      <script src="_static/_sphinx_javascript_frameworks_compat.js?v=2cd50e6c"></script>
+      <script src="_static/documentation_options.js?v=08bfcbec"></script>
+      <script src="_static/doctools.js?v=9bcbadda"></script>
+      <script src="_static/sphinx_highlight.js?v=dc90522c"></script>
+    <script src="_static/js/theme.js"></script>
+    <link rel="index" title="Index" href="genindex.html" />
+    <link rel="search" title="Search" href="search.html" />
+    <link rel="next" title="Getting started" href="first_training.html" />
+    <link rel="prev" title="Installation" href="installation.html" /> 
+</head>
+
+<body class="wy-body-for-nav"> 
+  <div class="wy-grid-for-nav">
+    <nav data-toggle="wy-nav-shift" class="wy-nav-side">
+      <div class="wy-side-scroll">
+        <div class="wy-side-nav-search" >
+
+          
+          
+          <a href="index.html" class="icon icon-home">
+            Linesight
+          </a>
+<div role="search">
+  <form id="rtd-search-form" class="wy-form" action="search.html" method="get">
+    <input type="text" name="q" placeholder="Search docs" aria-label="Search docs" />
+    <input type="hidden" name="check_keywords" value="yes" />
+    <input type="hidden" name="area" value="default" />
+  </form>
+</div>
+        </div><div class="wy-menu wy-menu-vertical" data-spy="affix" role="navigation" aria-label="Navigation menu">
+              <p class="caption" role="heading"><span class="caption-text">User Documentation:</span></p>
+<ul class="current">
+<li class="toctree-l1"><a class="reference internal" href="installation.html">Installation</a></li>
+<li class="toctree-l1 current"><a class="current reference internal" href="#">Distributed Split Deploy</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="#recommended-hardware-split">Recommended hardware split</a></li>
+<li class="toctree-l2"><a class="reference internal" href="#setup-assumptions">Setup assumptions</a></li>
+<li class="toctree-l2"><a class="reference internal" href="#mac-learner">Mac learner</a></li>
+<li class="toctree-l2"><a class="reference internal" href="#windows-lenovo-collectors">Windows Lenovo collectors</a></li>
+<li class="toctree-l2"><a class="reference internal" href="#network-and-firewall-requirements">Network and firewall requirements</a></li>
+<li class="toctree-l2"><a class="reference internal" href="#config-sync-expectations">Config sync expectations</a></li>
+<li class="toctree-l2"><a class="reference internal" href="#verification">Verification</a></li>
+<li class="toctree-l2"><a class="reference internal" href="#operational-notes">Operational notes</a></li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="first_training.html">Getting started</a></li>
+<li class="toctree-l1"><a class="reference internal" href="second_training.html">Custom training</a></li>
+<li class="toctree-l1"><a class="reference internal" href="user_faq.html">User FAQ</a></li>
+<li class="toctree-l1"><a class="reference internal" href="troubleshooting.html">Troubleshooting</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Dev Documentation:</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="project_structure.html">Project Structure</a></li>
+<li class="toctree-l1"><a class="reference internal" href="main_objects.html">Main Objects</a></li>
+<li class="toctree-l1"><a class="reference internal" href="contributions.html">Contributions</a></li>
+<li class="toctree-l1"><a class="reference internal" href="documentation.html">Documentation</a></li>
+<li class="toctree-l1"><a class="reference internal" href="dev_faq.html">Dev FAQ</a></li>
+<li class="toctree-l1"><a class="reference internal" href="reading_list.html">Learning Resources</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Community tips &amp; tricks</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="empty_page.html">Empty page</a></li>
+</ul>
+
+        </div>
+      </div>
+    </nav>
+
+    <section data-toggle="wy-nav-shift" class="wy-nav-content-wrap"><nav class="wy-nav-top" aria-label="Mobile navigation menu" >
+          <i data-toggle="wy-nav-top" class="fa fa-bars"></i>
+          <a href="index.html">Linesight</a>
+      </nav>
+
+      <div class="wy-nav-content">
+        <div class="rst-content">
+          <div role="navigation" aria-label="Page navigation">
+  <ul class="wy-breadcrumbs">
+      <li><a href="index.html" class="icon icon-home" aria-label="Home"></a></li>
+      <li class="breadcrumb-item active">Distributed Split Deploy</li>
+      <li class="wy-breadcrumbs-aside">
+            <a href="_sources/distributed_split.rst.txt" rel="nofollow"> View page source</a>
+      </li>
+  </ul>
+  <hr/>
+</div>
+          <div role="main" class="document" itemscope="itemscope" itemtype="http://schema.org/Article">
+           <div itemprop="articleBody">
+             
+  <section id="distributed-split-deploy">
+<h1>Distributed Split Deploy<a class="headerlink" href="#distributed-split-deploy" title="Link to this heading"></a></h1>
+<p>This page documents the split deployment for Linesight where:</p>
+<ul class="simple">
+<li><p>the Windows Lenovo runs TrackMania and the collector processes locally</p></li>
+<li><p>the Apple Silicon Mac runs the learner on the <cite>mps</cite> backend</p></li>
+<li><p>the two machines exchange weights and rollout data over TCP</p></li>
+</ul>
+<p>This setup is intended for a trusted local network. The transport is authenticated with a shared token, but it is not encrypted. Do not expose the learner port to the public internet.</p>
+<section id="recommended-hardware-split">
+<h2>Recommended hardware split<a class="headerlink" href="#recommended-hardware-split" title="Link to this heading"></a></h2>
+<p>The Mac should be used for the learner because Apple Silicon can run the learner on the <cite>mps</cite> backend.</p>
+<p>If you later move the learner to an Nvidia machine, CUDA is still the stronger option. On the Mac side, <cite>mps</cite> is the best native backend for this repo.</p>
+</section>
+<section id="setup-assumptions">
+<h2>Setup assumptions<a class="headerlink" href="#setup-assumptions" title="Link to this heading"></a></h2>
+<p>Before starting, make sure both machines have:</p>
+<ul class="simple">
+<li><p>the same Linesight checkout and the same commit</p></li>
+<li><p>the same <cite>config_files/config.py</cite></p></li>
+<li><p>the same <cite>run_name</cite></p></li>
+<li><p>access to the same maps and the same relative map paths referenced by the config</p></li>
+</ul>
+<p>Machine-specific settings still need to be correct in <cite>config_files/user_config.py</cite>:</p>
+<ul class="simple">
+<li><p>on Windows, point to the local TrackMania installation, TMInterface plugin path, and TMLoader setup</p></li>
+<li><p>on macOS, keep the repo paths valid for the local user account; TrackMania itself is not required on the Mac</p></li>
+</ul>
+<p>The code copies <cite>config_files/config.py</cite> to <cite>config_files/config_copy.py</cite> at launch. If you change training hyperparameters, restart both machines so they reload the same config snapshot.</p>
+</section>
+<section id="mac-learner">
+<h2>Mac learner<a class="headerlink" href="#mac-learner" title="Link to this heading"></a></h2>
+<p>Start the learner first on the Mac:</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>python<span class="w"> </span>scripts/train_distributed_learner.py<span class="w"> </span>--device<span class="w"> </span>mps<span class="w"> </span>--host<span class="w"> </span><span class="m">0</span>.0.0.0<span class="w"> </span>--port<span class="w"> </span><span class="m">9100</span><span class="w"> </span>--auth-token<span class="w"> </span>YOUR_SHARED_TOKEN
+</pre></div>
+</div>
+<p>Notes:</p>
+<ul class="simple">
+<li><p><cite>–device mps</cite> forces the learner to use Apple Silicon GPU acceleration</p></li>
+<li><p><cite>–host 0.0.0.0</cite> binds the learner server to all interfaces on the Mac</p></li>
+<li><p><cite>–port 9100</cite> is the default listener port used by the collector machine</p></li>
+<li><p><cite>–auth-token</cite> must match the token you pass to the Windows collector command</p></li>
+</ul>
+<p>The Mac process owns:</p>
+<ul class="simple">
+<li><p>the online and target networks</p></li>
+<li><p>replay buffer sampling and training</p></li>
+<li><p>checkpoints in <cite>save/{run_name}/</cite></p></li>
+<li><p>TensorBoard logs in <cite>tensorboard/</cite></p></li>
+</ul>
+</section>
+<section id="windows-lenovo-collectors">
+<h2>Windows Lenovo collectors<a class="headerlink" href="#windows-lenovo-collectors" title="Link to this heading"></a></h2>
+<p>On the Windows machine, start the collector runner after the learner is listening:</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>python<span class="w"> </span>scripts/run_distributed_collectors.py<span class="w"> </span>--learner-host<span class="w"> </span>MAC_IP_ADDRESS<span class="w"> </span>--learner-port<span class="w"> </span><span class="m">9100</span><span class="w"> </span>--auth-token<span class="w"> </span>YOUR_SHARED_TOKEN
+</pre></div>
+</div>
+<p>Notes:</p>
+<ul class="simple">
+<li><p><cite>MAC_IP_ADDRESS</cite> should be the Mac’s LAN IP address or a hostname that the Windows machine can resolve</p></li>
+<li><p>the auth token must be identical to the one used on the Mac</p></li>
+<li><p>the Windows machine keeps running TrackMania instances locally</p></li>
+<li><p>each collector uses its own local TMInterface port from <cite>base_tmi_port</cite></p></li>
+</ul>
+<p>The Windows process owns:</p>
+<ul class="simple">
+<li><p>game launch and restart</p></li>
+<li><p>TMInterface interaction</p></li>
+<li><p>frame capture and action execution</p></li>
+<li><p>rollout generation</p></li>
+</ul>
+</section>
+<section id="network-and-firewall-requirements">
+<h2>Network and firewall requirements<a class="headerlink" href="#network-and-firewall-requirements" title="Link to this heading"></a></h2>
+<p>Open the learner port on the Mac so the Windows machine can reach it.</p>
+<p>Keep the deployment on a trusted LAN or VPN. The transport uses authenticated Python serialization and should not be exposed to the public internet.</p>
+</section>
+<section id="config-sync-expectations">
+<h2>Config sync expectations<a class="headerlink" href="#config-sync-expectations" title="Link to this heading"></a></h2>
+<p>The following settings should match on both machines:</p>
+<ul class="simple">
+<li><p><cite>run_name</cite></p></li>
+<li><p>map cycle and map paths</p></li>
+<li><p>training hyperparameters that affect rollout generation or learning</p></li>
+<li><p><cite>gpu_collectors_count</cite></p></li>
+</ul>
+<p>The following settings are machine-specific:</p>
+<ul class="simple">
+<li><p>Windows TrackMania, TMInterface, and TMLoader paths</p></li>
+<li><p>the Mac learner bind address, TCP port, and shared auth token used to accept collectors</p></li>
+</ul>
+</section>
+<section id="verification">
+<h2>Verification<a class="headerlink" href="#verification" title="Link to this heading"></a></h2>
+<p>Use this sequence to confirm the split is working:</p>
+<ol class="arabic simple">
+<li><p>Start the Mac learner and confirm it reports <cite>Learner device: mps</cite>.</p></li>
+<li><p>Confirm the Mac prints <cite>Remote learner listening on …:9100</cite>.</p></li>
+<li><p>Start the Windows collector command and confirm it launches TrackMania instances.</p></li>
+<li><p>Check that rollouts begin and that the Mac starts writing TensorBoard scalars.</p></li>
+<li><p>Verify that checkpoints appear under <cite>save/{run_name}/</cite> on the Mac.</p></li>
+<li><p>If you are using more than one collector, confirm each game instance is using a distinct TMInterface port starting at <cite>base_tmi_port</cite>.</p></li>
+</ol>
+<p>If the collector cannot connect, check the Mac firewall, the IP address, and the shared token first.</p>
+</section>
+<section id="operational-notes">
+<h2>Operational notes<a class="headerlink" href="#operational-notes" title="Link to this heading"></a></h2>
+<ul class="simple">
+<li><p>Start the learner before the collectors.</p></li>
+<li><p>Restart both machines after editing <cite>config_files/config.py</cite>.</p></li>
+<li><p>Treat the token as a secret and rotate it if it is ever exposed.</p></li>
+<li><p>If MPS hits an unsupported operator, PyTorch fallback is enabled automatically on the Mac.</p></li>
+</ul>
+</section>
+</section>
+
+
+           </div>
+          </div>
+          <footer><div class="rst-footer-buttons" role="navigation" aria-label="Footer">
+        <a href="installation.html" class="btn btn-neutral float-left" title="Installation" accesskey="p" rel="prev"><span class="fa fa-arrow-circle-left" aria-hidden="true"></span> Previous</a>
+        <a href="first_training.html" class="btn btn-neutral float-right" title="Getting started" accesskey="n" rel="next">Next <span class="fa fa-arrow-circle-right" aria-hidden="true"></span></a>
+    </div>
+
+  <hr/>
+
+  <div role="contentinfo">
+    <p>&#169; Copyright 2024, pb4 and Agade.</p>
+  </div>
+
+  Built with <a href="https://www.sphinx-doc.org/">Sphinx</a> using a
+    <a href="https://github.com/readthedocs/sphinx_rtd_theme">theme</a>
+    provided by <a href="https://readthedocs.org">Read the Docs</a>.
+   
+
+</footer>
+        </div>
+      </div>
+    </section>
+  </div>
+  <script>
+      jQuery(function () {
+          SphinxRtdTheme.Navigation.enable(true);
+      });
+  </script> 
+
+</body>
+</html>

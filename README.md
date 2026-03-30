@@ -24,6 +24,10 @@ Trackmania is a racing game that sacrifices some of the realism of sim-racers fo
 
 Our work, combined with the efforts of [donadigo](https://github.com/donadigo) and [Kim](https://github.com/koyaanis) of the [Trackmania Interface team](https://donadigo.com/tminterface/) allow interfacing to [Trackmania Nations Forever](https://en.wikipedia.org/wiki/TrackMania#TrackMania_United). Allowing you to programmatically send inputs, get car states, get screenshots, etc... This part of our codebase could be useful to other RL projects.
 
+## Distributed Split Deployment
+
+If you want Trackmania to run locally on a Windows Lenovo while the learner runs on an Apple Silicon Mac, see the operator guide in the documentation: [Distributed Split Deploy][split-doc].
+
 ## Results
 
 To our knowledge, Linesight is by far the most advanced AI in Trackmania. It was the first to demonstrate human-level driving around May 2023, with [Wirtual playing against it](https://www.youtube.com/watch?v=wjHW3ai47Og) in June. In May 2024, Linesight was the first to [showcase beating world records on official campaign tracks](https://www.youtube.com/watch?v=cUojVsCJ51I).
@@ -31,6 +35,7 @@ To our knowledge, Linesight is by far the most advanced AI in Trackmania. It was
 Now that the project is open-source, can you help make it even stronger?
 
 [doc-link]: https://linesight-rl.github.io/linesight/build/html/
+[split-doc]: https://linesight-rl.github.io/linesight/build/html/distributed_split.html
 [discord-link]:       https://discord.gg/PvWYGkGKqd
 
 [doc-badge]: https://img.shields.io/badge/Documentation-blue?style=for-the-badge&logoSize=small&logo=readthedocs

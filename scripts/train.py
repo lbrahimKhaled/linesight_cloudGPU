@@ -51,6 +51,7 @@ from torch.multiprocessing import Lock
 
 from config_files import config_copy
 from trackmania_rl.agents.iqn import make_untrained_iqn_network
+from trackmania_rl.device import configure_torch_runtime, resolve_torch_device
 from trackmania_rl.multiprocess.collector_process import collector_process_fn
 from trackmania_rl.multiprocess.learner_process import learner_process_fn
 from trackmania_rl.utilities import set_random_seed
@@ -112,7 +113,13 @@ if __name__ == "__main__":
     rollout_queues = [mp.Queue(config_copy.max_rollout_queue_size) for _ in range(config_copy.gpu_collectors_count)]
     shared_network_lock = Lock()
     game_spawning_lock = Lock()
-    _, uncompiled_shared_network = make_untrained_iqn_network(jit=config_copy.use_jit, is_inference=False)
+    learner_device = resolve_torch_device("auto")
+    configure_torch_runtime(learner_device)
+    _, uncompiled_shared_network = make_untrained_iqn_network(
+        jit=config_copy.use_jit,
+        is_inference=False,
+        device=torch.device("cpu"),
+    )
     uncompiled_shared_network.share_memory()
 
     # Start worker process
@@ -138,7 +145,14 @@ if __name__ == "__main__":
 
     # Start learner process
     learner_process_fn(
-        rollout_queues, uncompiled_shared_network, shared_network_lock, shared_steps, base_dir, save_dir, tensorboard_base_dir
+        rollout_queues,
+        uncompiled_shared_network,
+        shared_network_lock,
+        shared_steps,
+        base_dir,
+        save_dir,
+        tensorboard_base_dir,
+        learner_device=learner_device,
     )  # Turn main process into learner process instead of starting a new one, this saves 1 CUDA context
 
     for collector_process in collector_processes:

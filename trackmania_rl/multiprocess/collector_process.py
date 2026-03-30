@@ -27,11 +27,26 @@ def collector_process_fn(
     save_dir: Path,
     tmi_port: int,
     process_number: int,
+    remote_collector_config=None,
 ):
     from trackmania_rl.map_loader import analyze_map_cycle, load_next_map_zone_centers
     from trackmania_rl.tmi_interaction import game_instance_manager
 
     set_random_seed(process_number)
+
+    remote_session = None
+    current_weights_version = -1
+    if remote_collector_config is not None:
+        from trackmania_rl.distributed.training_hub import RemoteCollectorSession
+
+        remote_session = RemoteCollectorSession(
+            host=remote_collector_config["host"],
+            port=remote_collector_config["port"],
+            auth_token=remote_collector_config["auth_token"],
+            collector_name=f"{remote_collector_config['collector_name_prefix']}-{process_number}",
+            connect_timeout_s=remote_collector_config.get("connect_timeout_s", 30),
+            request_timeout_s=remote_collector_config.get("request_timeout_s", 120),
+        )
 
     tmi = game_instance_manager.GameInstanceManager(
         game_spawning_lock=game_spawning_lock,
@@ -42,18 +57,43 @@ def collector_process_fn(
         tmi_port=tmi_port,
     )
 
-    inference_network, uncompiled_inference_network = iqn.make_untrained_iqn_network(config_copy.use_jit, is_inference=True)
-    try:
-        inference_network.load_state_dict(torch.load(f=save_dir / "weights1.torch", weights_only=False))
-    except Exception as e:
-        print("Worker could not load weights, exception:", e)
+    inference_network, uncompiled_inference_network = iqn.make_untrained_iqn_network(
+        config_copy.use_jit,
+        is_inference=True,
+        device=torch.device("cpu"),
+    )
 
     inferer = iqn.Inferer(inference_network, config_copy.iqn_k, config_copy.tau_epsilon_boltzmann)
 
+    def load_state_dict_into_inference_models(state_dict):
+        inference_network.load_state_dict(state_dict)
+        uncompiled_inference_network.load_state_dict(state_dict)
+
     def update_network():
         # Update weights of the inference network
-        with shared_network_lock:
-            uncompiled_inference_network.load_state_dict(uncompiled_shared_network.state_dict())
+        nonlocal current_weights_version
+        if remote_session is not None:
+            try:
+                weights_version, state_dict, remote_shared_steps = remote_session.pull_weights(current_weights_version)
+            except (EOFError, OSError):
+                return
+            shared_steps.value = remote_shared_steps
+            if state_dict is not None:
+                load_state_dict_into_inference_models(state_dict)
+                current_weights_version = weights_version
+        else:
+            with shared_network_lock:
+                load_state_dict_into_inference_models(uncompiled_shared_network.state_dict())
+
+    if remote_session is not None:
+        current_weights_version, initial_state_dict, initial_shared_steps = remote_session.wait_for_initial_weights()
+        load_state_dict_into_inference_models(initial_state_dict)
+        shared_steps.value = initial_shared_steps
+    else:
+        try:
+            load_state_dict_into_inference_models(torch.load(f=save_dir / "weights1.torch", map_location="cpu", weights_only=False))
+        except Exception as e:
+            print("Worker could not load weights, exception:", e)
 
     # ========================================================
     # Training loop
@@ -131,15 +171,19 @@ def collector_process_fn(
         print("", flush=True)
 
         if not tmi.last_rollout_crashed:
-            rollout_queue.put(
-                (
-                    rollout_results,
-                    end_race_stats,
-                    fill_buffer,
-                    is_explo,
-                    map_name,
-                    map_status,
-                    rollout_duration,
-                    loop_number,
-                )
+            payload = (
+                rollout_results,
+                end_race_stats,
+                fill_buffer,
+                is_explo,
+                map_name,
+                map_status,
+                rollout_duration,
+                loop_number,
             )
+            if remote_session is not None:
+                remote_session.submit_rollout(payload)
+            else:
+                rollout_queue.put(
+                    payload
+                )

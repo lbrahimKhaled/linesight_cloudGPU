@@ -16,6 +16,7 @@ import torch
 from torchrl.data import ReplayBuffer
 
 from config_files import config_copy
+from trackmania_rl.device import make_autocast_context
 from trackmania_rl import utilities
 
 
@@ -71,8 +72,16 @@ class IQN_Network(torch.nn.Module):
         self.n_actions = n_actions
 
         # States are not normalized when the method forward() is called. Normalization is done as the first step of the forward() method.
-        self.float_inputs_mean = torch.tensor(float_inputs_mean, dtype=torch.float32).to("cpu")
-        self.float_inputs_std = torch.tensor(float_inputs_std, dtype=torch.float32).to("cpu")
+        self.register_buffer(
+            "float_inputs_mean",
+            torch.tensor(float_inputs_mean, dtype=torch.float32),
+            persistent=False,
+        )
+        self.register_buffer(
+            "float_inputs_std",
+            torch.tensor(float_inputs_std, dtype=torch.float32),
+            persistent=False,
+        )
 
     def initialize_weights(self):
         lrelu_neg_slope = 1e-2
@@ -117,17 +126,18 @@ class IQN_Network(torch.nn.Module):
             tau: a torch.Tensor of shape (batch_size * num_quantiles, 1) representing the quantiles used to make each prediction
         """
         batch_size = img.shape[0]
+        compute_device = img.device
         img_outputs = self.img_head(img)
         float_outputs = self.float_feature_extractor((float_inputs - self.float_inputs_mean) / self.float_inputs_std)
         concat = torch.cat((img_outputs, float_outputs), 1)  # (batch_size, dense_input_dimension)
         if tau is None:
             tau = (
-                torch.arange(num_quantiles // 2, device="cpu", dtype=torch.float32).repeat_interleave(batch_size).unsqueeze(1)
-                + torch.rand(size=(batch_size * num_quantiles // 2, 1), device="cpu", dtype=torch.float32)
+                torch.arange(num_quantiles // 2, device=compute_device, dtype=torch.float32).repeat_interleave(batch_size).unsqueeze(1)
+                + torch.rand(size=(batch_size * num_quantiles // 2, 1), device=compute_device, dtype=torch.float32)
             ) / num_quantiles  # (batch_size * num_quantiles // 2, 1) (random numbers)
             tau = torch.cat((tau, 1 - tau), dim=0)  # ensure that tau are sampled symmetrically
         quantile_net = torch.cos(
-            torch.arange(1, self.iqn_embedding_dimension + 1, 1, device="cpu") * math.pi * tau
+            torch.arange(1, self.iqn_embedding_dimension + 1, 1, device=compute_device) * math.pi * tau
         )  # (batch_size*num_quantiles, 1)
         quantile_net = quantile_net.expand(
             [-1, self.iqn_embedding_dimension]
@@ -209,6 +219,7 @@ class Trainer:
         self.iqn_n = iqn_n
         self.typical_self_loss = 0.01
         self.typical_clamped_self_loss = 0.01
+        self.device = next(self.online_network.parameters()).device
 
     def train_on_batch(self, buffer: ReplayBuffer, do_learn: bool):
         """
@@ -231,7 +242,7 @@ class Trainer:
         """
         self.optimizer.zero_grad(set_to_none=True)
 
-        with torch.amp.autocast(device_type="cpu", dtype=torch.float16):
+        with make_autocast_context(self.device):
             with torch.no_grad():
                 batch, batch_info = buffer.sample(self.batch_size, return_info=True)
                 (
@@ -244,7 +255,7 @@ class Trainer:
                     gammas_terminal,
                 ) = batch
                 if config_copy.prio_alpha > 0:
-                    IS_weights = torch.from_numpy(batch_info["_weight"]).to("cpu", non_blocking=True)
+                    IS_weights = torch.from_numpy(batch_info["_weight"]).to(self.device, non_blocking=True)
 
                 rewards = rewards.unsqueeze(-1).repeat(
                     [self.iqn_n, 1]
@@ -355,6 +366,7 @@ class Inferer:
         "epsilon_boltzmann",
         "tau_epsilon_boltzmann",
         "is_explo",
+        "device",
     )
 
     def __init__(self, inference_network, iqn_k, tau_epsilon_boltzmann):
@@ -364,6 +376,7 @@ class Inferer:
         self.epsilon_boltzmann = None
         self.tau_epsilon_boltzmann = tau_epsilon_boltzmann
         self.is_explo = None
+        self.device = next(self.inference_network.parameters()).device
 
     def infer_network(self, img_inputs_uint8: npt.NDArray, float_inputs: npt.NDArray, tau=None) -> npt.NDArray:
         """
@@ -378,13 +391,15 @@ class Inferer:
             q_values:           a numpy array of shape (iqn_k, 1)
         """
         with torch.no_grad():
+            if tau is not None:
+                tau = tau.to(self.device)
             state_img_tensor = (
                 torch.from_numpy(img_inputs_uint8)
                 .unsqueeze(0)
-                .to("cpu", memory_format=torch.channels_last, non_blocking=True, dtype=torch.float32)
+                .to(self.device, memory_format=torch.channels_last, non_blocking=True, dtype=torch.float32)
                 - 128
             ) / 128
-            state_float_tensor = torch.from_numpy(np.expand_dims(float_inputs, axis=0)).to("cpu", non_blocking=True)
+            state_float_tensor = torch.from_numpy(np.expand_dims(float_inputs, axis=0)).to(self.device, non_blocking=True)
             q_values = (
                 self.inference_network(
                     state_img_tensor,
@@ -392,6 +407,7 @@ class Inferer:
                     self.iqn_k,
                     tau=tau,  # torch.linspace(0.05, 0.95, self.iqn_k, device="cpu")[:, None],
                 )[0]
+                .detach()
                 .cpu()
                 .numpy()
                 .astype(np.float32)
@@ -437,7 +453,11 @@ class Inferer:
         )
 
 
-def make_untrained_iqn_network(jit: bool, is_inference: bool) -> Tuple[IQN_Network, IQN_Network]:
+def make_untrained_iqn_network(
+    jit: bool,
+    is_inference: bool,
+    device: torch.device = torch.device("cpu"),
+) -> Tuple[IQN_Network, IQN_Network]:
     """
     Constructs two identical copies of the IQN network.
 
@@ -458,7 +478,7 @@ def make_untrained_iqn_network(jit: bool, is_inference: bool) -> Tuple[IQN_Netwo
         float_inputs_mean=config_copy.float_inputs_mean,
         float_inputs_std=config_copy.float_inputs_std,
     )
-    if jit:
+    if jit and device.type != "mps":
         if config_copy.is_linux:
             compile_mode = None if "rocm" in torch.__version__ else ("max-autotune" if is_inference else "max-autotune-no-cudagraphs")
             model = torch.compile(uncompiled_model, dynamic=False, mode=compile_mode)
@@ -467,6 +487,6 @@ def make_untrained_iqn_network(jit: bool, is_inference: bool) -> Tuple[IQN_Netwo
     else:
         model = copy.deepcopy(uncompiled_model)
     return (
-        model.to(device="cpu", memory_format=torch.channels_last).train(),
-        uncompiled_model.to(device="cpu", memory_format=torch.channels_last).train(),
+        model.to(device=device, memory_format=torch.channels_last).train(),
+        uncompiled_model.to(device=device, memory_format=torch.channels_last).train(),
     )

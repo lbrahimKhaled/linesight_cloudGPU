@@ -33,6 +33,7 @@ from trackmania_rl.analysis_metrics import (
     tau_curves,
 )
 from trackmania_rl.buffer_utilities import make_buffers, resize_buffers
+from trackmania_rl.device import make_grad_scaler
 from trackmania_rl.map_reference_times import reference_times
 
 
@@ -44,6 +45,8 @@ def learner_process_fn(
     base_dir: Path,
     save_dir: Path,
     tensorboard_base_dir: Path,
+    learner_device: torch.device = torch.device("cpu"),
+    network_publisher: typing.Optional[typing.Callable[[dict, int], None]] = None,
 ):
     layout_version = "lay_mono"
     SummaryWriter(log_dir=str(tensorboard_base_dir / layout_version)).add_custom_scalars(
@@ -112,9 +115,18 @@ def learner_process_fn(
     # Create new stuff
     # ========================================================
 
-    online_network, uncompiled_online_network = make_untrained_iqn_network(config_copy.use_jit, is_inference=False)
-    target_network, _ = make_untrained_iqn_network(config_copy.use_jit, is_inference=False)
+    online_network, _ = make_untrained_iqn_network(
+        config_copy.use_jit,
+        is_inference=False,
+        device=learner_device,
+    )
+    target_network, _ = make_untrained_iqn_network(
+        config_copy.use_jit,
+        is_inference=False,
+        device=learner_device,
+    )
 
+    print(f"Learner device: {learner_device}")
     print(online_network)
     utilities.count_parameters(online_network)
 
@@ -134,14 +146,11 @@ def learner_process_fn(
     # ========================================================
     # noinspection PyBroadException
     try:
-        online_network.load_state_dict(torch.load(f=save_dir / "weights1.torch", weights_only=False))
-        target_network.load_state_dict(torch.load(f=save_dir / "weights2.torch", weights_only=False))
+        online_network.load_state_dict(torch.load(f=save_dir / "weights1.torch", map_location="cpu", weights_only=False))
+        target_network.load_state_dict(torch.load(f=save_dir / "weights2.torch", map_location="cpu", weights_only=False))
         print(" =====================     Learner weights loaded !     ============================")
     except:
         print(" Learner could not load weights")
-
-    with shared_network_lock:
-        uncompiled_shared_network.load_state_dict(uncompiled_online_network.state_dict())
 
     # noinspection PyBroadException
     try:
@@ -168,17 +177,21 @@ def learner_process_fn(
     )
     # optimizer1 = torch_optimizer.Lookahead(optimizer1, k=5, alpha=0.5)
 
-    scaler = torch.amp.GradScaler("cpu")
+    scaler = make_grad_scaler(learner_device)
     memory_size, memory_size_start_learn = utilities.from_staircase_schedule(
         config_copy.memory_size_schedule, accumulated_stats["cumul_number_frames_played"]
     )
-    buffer, buffer_test = make_buffers(memory_size)
+    buffer, buffer_test = make_buffers(memory_size, device=learner_device)
     offset_cumul_number_single_memories_used = memory_size_start_learn * config_copy.number_times_single_memory_is_used_before_discard
 
     # noinspection PyBroadException
     try:
-        optimizer1.load_state_dict(torch.load(f=save_dir / "optimizer1.torch", weights_only=False))
-        scaler.load_state_dict(torch.load(f=save_dir / "scaler.torch", weights_only=False))
+        optimizer1.load_state_dict(torch.load(f=save_dir / "optimizer1.torch", map_location="cpu", weights_only=False))
+        scaler.load_state_dict(torch.load(f=save_dir / "scaler.torch", map_location="cpu", weights_only=False))
+        for state in optimizer1.state.values():
+            for key, value in state.items():
+                if torch.is_tensor(value):
+                    state[key] = value.to(learner_device)
         print(" =========================     Optimizer loaded !     ================================")
     except:
         print(" Could not load optimizer")
@@ -212,6 +225,15 @@ def learner_process_fn(
         iqn_k=config_copy.iqn_k,
         tau_epsilon_boltzmann=config_copy.tau_epsilon_boltzmann,
     )
+
+    def publish_network_state():
+        if uncompiled_shared_network is not None and shared_network_lock is not None:
+            with shared_network_lock:
+                uncompiled_shared_network.load_state_dict(online_network.state_dict())
+        if network_publisher is not None:
+            network_publisher(online_network.state_dict(), shared_steps.value)
+
+    publish_network_state()
 
     while True:  # Trainer loop
         before_wait_time = time.perf_counter()
@@ -253,7 +275,7 @@ def learner_process_fn(
             accumulated_stats["cumul_number_frames_played"],
         )
         if new_memory_size != memory_size:
-            buffer, buffer_test = resize_buffers(buffer, buffer_test, new_memory_size)
+            buffer, buffer_test = resize_buffers(buffer, buffer_test, new_memory_size, device=learner_device)
             offset_cumul_number_single_memories_used += (
                 new_memory_size_start_learn - memory_size_start_learn
             ) * config_copy.number_times_single_memory_is_used_before_discard
@@ -460,7 +482,11 @@ def learner_process_fn(
                 single_reset_flag = config_copy.single_reset_flag
                 accumulated_stats["cumul_number_single_memories_should_have_been_used"] += config_copy.additional_transition_after_reset
 
-                _, untrained_iqn_network = make_untrained_iqn_network(config_copy.use_jit, False)
+                _, untrained_iqn_network = make_untrained_iqn_network(
+                    config_copy.use_jit,
+                    False,
+                    device=learner_device,
+                )
                 utilities.soft_copy_param(online_network, untrained_iqn_network, config_copy.overall_reset_mul_factor)
 
                 with torch.no_grad():
@@ -523,8 +549,7 @@ def learner_process_fn(
 
                     utilities.custom_weight_decay(online_network, 1 - weight_decay)
                     if accumulated_stats["cumul_number_batches_done"] % config_copy.send_shared_network_every_n_batches == 0:
-                        with shared_network_lock:
-                            uncompiled_shared_network.load_state_dict(uncompiled_online_network.state_dict())
+                        publish_network_state()
 
                     # ===============================================
                     #   UPDATE TARGET NETWORK
@@ -635,7 +660,7 @@ def learner_process_fn(
 
             if online_network.training:
                 online_network.eval()
-            tau = torch.linspace(0.05, 0.95, config_copy.iqn_k)[:, None].to("cpu")
+            tau = torch.linspace(0.05, 0.95, config_copy.iqn_k, device=learner_device)[:, None]
             per_quantile_output = inferer.infer_network(rollout_results["frames"][0], rollout_results["state_float"][0], tau)
             for i, std in enumerate(list(per_quantile_output.std(axis=0))):
                 step_stats[f"std_within_iqn_quantiles_for_action{i}"] = std

@@ -14,6 +14,7 @@ import torch
 from prettytable import PrettyTable
 
 from trackmania_rl import run_to_video
+from trackmania_rl.device import state_dict_to_cpu
 
 
 def init_kaiming(layer, neg_slope=0, nonlinearity="leaky_relu"):
@@ -188,13 +189,16 @@ def save_checkpoint(
     scaler: torch.cuda.amp.GradScaler,
 ):
     checkpoint_dir.mkdir(parents=True, exist_ok=True)
-    torch.save(online_network.state_dict(), checkpoint_dir / "weights1.torch")
-    torch.save(target_network.state_dict(), checkpoint_dir / "weights2.torch")
+    torch.save(state_dict_to_cpu(online_network.state_dict()), checkpoint_dir / "weights1.torch")
+    torch.save(state_dict_to_cpu(target_network.state_dict()), checkpoint_dir / "weights2.torch")
     torch.save(optimizer.state_dict(), checkpoint_dir / "optimizer1.torch")
     torch.save(scaler.state_dict(), checkpoint_dir / "scaler.torch")
+
 
 def set_random_seed(seed: int):
     random.seed(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)
     torch.cuda.manual_seed_all(seed)
+    if hasattr(torch, "mps") and hasattr(torch.mps, "manual_seed"):
+        torch.mps.manual_seed(seed)

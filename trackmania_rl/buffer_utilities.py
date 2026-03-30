@@ -43,132 +43,143 @@ def fast_collate_cpu(batch, attr_name):
 
 
 def send_to_gpu(batch, attr_name):
+    raise NotImplementedError("send_to_gpu() has been replaced by send_to_device().")
+
+
+def send_to_device(batch, attr_name, device: torch.device):
     return torch.as_tensor(batch).to(
-        non_blocking=True, device="cpu", memory_format=torch.channels_last if "img" in attr_name else torch.preserve_format
+        non_blocking=True,
+        device=device,
+        memory_format=torch.channels_last if "img" in attr_name else torch.preserve_format,
     )
 
 
-def buffer_collate_function(batch):
-    (
-        state_img,
-        state_float,
-        state_potential,
-        action,
-        rewards,
-        next_state_img,
-        next_state_float,
-        next_state_potential,
-        gammas,
-        terminal_actions,
-        n_steps,
-    ) = tuple(
-        map(
-            lambda attr_name: fast_collate_cpu(batch, attr_name),
-            [
-                "state_img",
-                "state_float",
-                "state_potential",
-                "action",
-                "rewards",
-                "next_state_img",
-                "next_state_float",
-                "next_state_potential",
-                "gammas",
-                "terminal_actions",
-                "n_steps",
-            ],
-        )
-    )
+def make_buffer_collate_function(device: torch.device):
+    image_dtype = torch.float16 if device.type == "cuda" else torch.float32
 
-    temporal_mini_race_current_time_actions = (
-        np.abs(
-            np.random.randint(
-                low=-config_copy.oversample_long_term_steps + config_copy.oversample_maximum_term_steps,
-                high=config_copy.temporal_mini_race_duration_actions + config_copy.oversample_maximum_term_steps,
-                size=(len(state_img),),
-                dtype=int,
+    def buffer_collate_function(batch):
+        (
+            state_img,
+            state_float,
+            state_potential,
+            action,
+            rewards,
+            next_state_img,
+            next_state_float,
+            next_state_potential,
+            gammas,
+            terminal_actions,
+            n_steps,
+        ) = tuple(
+            map(
+                lambda attr_name: fast_collate_cpu(batch, attr_name),
+                [
+                    "state_img",
+                    "state_float",
+                    "state_potential",
+                    "action",
+                    "rewards",
+                    "next_state_img",
+                    "next_state_float",
+                    "next_state_potential",
+                    "gammas",
+                    "terminal_actions",
+                    "n_steps",
+                ],
             )
         )
-        - config_copy.oversample_maximum_term_steps
-    ).clip(min=0)
 
-    temporal_mini_race_next_time_actions = temporal_mini_race_current_time_actions + n_steps
+        temporal_mini_race_current_time_actions = (
+            np.abs(
+                np.random.randint(
+                    low=-config_copy.oversample_long_term_steps + config_copy.oversample_maximum_term_steps,
+                    high=config_copy.temporal_mini_race_duration_actions + config_copy.oversample_maximum_term_steps,
+                    size=(len(state_img),),
+                    dtype=int,
+                )
+            )
+            - config_copy.oversample_maximum_term_steps
+        ).clip(min=0)
 
-    state_float[:, 0] = temporal_mini_race_current_time_actions
-    next_state_float[:, 0] = temporal_mini_race_next_time_actions
+        temporal_mini_race_next_time_actions = temporal_mini_race_current_time_actions + n_steps
 
-    possibly_reduced_n_steps = n_steps - (temporal_mini_race_next_time_actions - config_copy.temporal_mini_race_duration_actions).clip(
-        min=0
-    )
+        state_float[:, 0] = temporal_mini_race_current_time_actions
+        next_state_float[:, 0] = temporal_mini_race_next_time_actions
 
-    terminal = (possibly_reduced_n_steps >= terminal_actions) | (
-        temporal_mini_race_next_time_actions >= config_copy.temporal_mini_race_duration_actions
-    )
+        possibly_reduced_n_steps = n_steps - (
+            temporal_mini_race_next_time_actions - config_copy.temporal_mini_race_duration_actions
+        ).clip(min=0)
 
-    gammas = np.take_along_axis(gammas, possibly_reduced_n_steps[:, None] - 1, axis=1).squeeze(-1)
-    gammas = np.where(terminal, 0, gammas)
-
-    rewards = np.take_along_axis(rewards, possibly_reduced_n_steps[:, None] - 1, axis=1).squeeze(-1)
-
-    rewards += np.where(terminal, 0, gammas * next_state_potential)
-    rewards -= state_potential
-
-    state_img, state_float, action, rewards, next_state_img, next_state_float, gammas = tuple(
-        map(
-            lambda batch, attr_name: send_to_gpu(batch, attr_name),
-            [
-                state_img,
-                state_float,
-                action,
-                rewards,
-                next_state_img,
-                next_state_float,
-                gammas,
-            ],
-            [
-                "state_img",
-                "state_float",
-                "action",
-                "rewards",
-                "next_state_img",
-                "next_state_float",
-                "gammas",
-            ],
-        )
-    )
-
-    state_img = (state_img.to(torch.float16) - 128) / 128
-    next_state_img = (next_state_img.to(torch.float16) - 128) / 128
-
-    if config_copy.apply_randomcrop_augmentation:
-        # Same transformation is applied for state and next_state.
-        # Different transformation is applied to each element in a batch.
-        i = random.randint(0, 2 * config_copy.n_pixels_to_crop_on_each_side)
-        j = random.randint(0, 2 * config_copy.n_pixels_to_crop_on_each_side)
-        state_img = transforms.functional.crop(
-            transforms.functional.pad(state_img, padding=config_copy.n_pixels_to_crop_on_each_side, padding_mode="edge"),
-            i,
-            j,
-            config_copy.H_downsized,
-            config_copy.W_downsized,
-        )
-        next_state_img = transforms.functional.crop(
-            transforms.functional.pad(next_state_img, padding=config_copy.n_pixels_to_crop_on_each_side, padding_mode="edge"),
-            i,
-            j,
-            config_copy.H_downsized,
-            config_copy.W_downsized,
+        terminal = (possibly_reduced_n_steps >= terminal_actions) | (
+            temporal_mini_race_next_time_actions >= config_copy.temporal_mini_race_duration_actions
         )
 
-    return (
-        state_img,
-        state_float,
-        action,
-        rewards,
-        next_state_img,
-        next_state_float,
-        gammas,
-    )
+        gammas = np.take_along_axis(gammas, possibly_reduced_n_steps[:, None] - 1, axis=1).squeeze(-1)
+        gammas = np.where(terminal, 0, gammas)
+
+        rewards = np.take_along_axis(rewards, possibly_reduced_n_steps[:, None] - 1, axis=1).squeeze(-1)
+
+        rewards += np.where(terminal, 0, gammas * next_state_potential)
+        rewards -= state_potential
+
+        state_img, state_float, action, rewards, next_state_img, next_state_float, gammas = tuple(
+            map(
+                lambda batch, attr_name: send_to_device(batch, attr_name, device),
+                [
+                    state_img,
+                    state_float,
+                    action,
+                    rewards,
+                    next_state_img,
+                    next_state_float,
+                    gammas,
+                ],
+                [
+                    "state_img",
+                    "state_float",
+                    "action",
+                    "rewards",
+                    "next_state_img",
+                    "next_state_float",
+                    "gammas",
+                ],
+            )
+        )
+
+        state_img = (state_img.to(image_dtype) - 128) / 128
+        next_state_img = (next_state_img.to(image_dtype) - 128) / 128
+
+        if config_copy.apply_randomcrop_augmentation:
+            # Same transformation is applied for state and next_state.
+            # Different transformation is applied to each element in a batch.
+            i = random.randint(0, 2 * config_copy.n_pixels_to_crop_on_each_side)
+            j = random.randint(0, 2 * config_copy.n_pixels_to_crop_on_each_side)
+            state_img = transforms.functional.crop(
+                transforms.functional.pad(state_img, padding=config_copy.n_pixels_to_crop_on_each_side, padding_mode="edge"),
+                i,
+                j,
+                config_copy.H_downsized,
+                config_copy.W_downsized,
+            )
+            next_state_img = transforms.functional.crop(
+                transforms.functional.pad(next_state_img, padding=config_copy.n_pixels_to_crop_on_each_side, padding_mode="edge"),
+                i,
+                j,
+                config_copy.H_downsized,
+                config_copy.W_downsized,
+            )
+
+        return (
+            state_img,
+            state_float,
+            action,
+            rewards,
+            next_state_img,
+            next_state_float,
+            gammas,
+        )
+
+    return buffer_collate_function
 
 
 class CustomPrioritizedSampler(PrioritizedSampler):
@@ -289,11 +300,12 @@ def copy_buffer_content_to_other_buffer(source_buffer: ReplayBuffer, target_buff
             target_buffer._sampler._sum_tree[i] = source_buffer._sampler._sum_tree.at(i)
 
 
-def make_buffers(buffer_size: int) -> tuple[ReplayBuffer, ReplayBuffer]:
+def make_buffers(buffer_size: int, device: torch.device = torch.device("cpu")) -> tuple[ReplayBuffer, ReplayBuffer]:
+    collate_fn = make_buffer_collate_function(device)
     buffer = ReplayBuffer(
         storage=ListStorage(buffer_size),
         batch_size=config_copy.batch_size,
-        collate_fn=buffer_collate_function,
+        collate_fn=collate_fn,
         prefetch=1,
         sampler=CustomPrioritizedSampler(
             buffer_size, config_copy.prio_alpha, config_copy.prio_beta, config_copy.prio_epsilon, torch.float64
@@ -304,7 +316,7 @@ def make_buffers(buffer_size: int) -> tuple[ReplayBuffer, ReplayBuffer]:
     buffer_test = ReplayBuffer(
         storage=ListStorage(int(buffer_size * config_copy.buffer_test_ratio)),
         batch_size=config_copy.batch_size,
-        collate_fn=buffer_collate_function,
+        collate_fn=collate_fn,
         prefetch=1,
         sampler=CustomPrioritizedSampler(
             buffer_size, config_copy.prio_alpha, config_copy.prio_beta, config_copy.prio_epsilon, torch.float64
@@ -315,8 +327,13 @@ def make_buffers(buffer_size: int) -> tuple[ReplayBuffer, ReplayBuffer]:
     return buffer, buffer_test
 
 
-def resize_buffers(buffer: ReplayBuffer, buffer_test: ReplayBuffer, new_buffer_size: int) -> tuple[ReplayBuffer, ReplayBuffer]:
-    new_buffer, new_buffer_test = make_buffers(new_buffer_size)
+def resize_buffers(
+    buffer: ReplayBuffer,
+    buffer_test: ReplayBuffer,
+    new_buffer_size: int,
+    device: torch.device = torch.device("cpu"),
+) -> tuple[ReplayBuffer, ReplayBuffer]:
+    new_buffer, new_buffer_test = make_buffers(new_buffer_size, device=device)
     copy_buffer_content_to_other_buffer(buffer, new_buffer)
     copy_buffer_content_to_other_buffer(buffer_test, new_buffer_test)
     return new_buffer, new_buffer_test
