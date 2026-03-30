@@ -200,6 +200,7 @@ class Trainer:
         "iqn_n",
         "typical_self_loss",
         "typical_clamped_self_loss",
+        "device",
     )
 
     def __init__(
