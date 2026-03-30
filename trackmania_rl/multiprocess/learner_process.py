@@ -5,6 +5,7 @@ This file implements the main training loop, tensorboard statistics tracking, et
 import copy
 import importlib
 import math
+import queue
 import random
 import sys
 import time
@@ -35,6 +36,30 @@ from trackmania_rl.analysis_metrics import (
 from trackmania_rl.buffer_utilities import make_buffers, resize_buffers
 from trackmania_rl.device import make_grad_scaler
 from trackmania_rl.map_reference_times import reference_times
+
+
+def _get_next_rollout_payload(rollout_queues, rollout_queue_readers, queue_check_order):
+    if rollout_queue_readers is not None:
+        wait(rollout_queue_readers)
+        for idx in queue_check_order:
+            if not rollout_queues[idx].empty():
+                payload = rollout_queues[idx].get()
+                queue_check_order.append(queue_check_order.pop(queue_check_order.index(idx)))
+                return payload
+        raise RuntimeError("A rollout queue signaled readiness but did not provide a payload.")
+
+    if len(rollout_queues) == 1:
+        return rollout_queues[0].get()
+
+    while True:
+        for idx in queue_check_order:
+            try:
+                payload = rollout_queues[idx].get_nowait()
+            except queue.Empty:
+                continue
+            queue_check_order.append(queue_check_order.pop(queue_check_order.index(idx)))
+            return payload
+        time.sleep(0.001)
 
 
 def learner_process_fn(
@@ -136,7 +161,11 @@ def learner_process_fn(
     previous_alltime_min = None
     time_last_save = time.perf_counter()
     queue_check_order = list(range(len(rollout_queues)))
-    rollout_queue_readers = [q._reader for q in rollout_queues]
+    rollout_queue_readers = (
+        [q._reader for q in rollout_queues]
+        if all(hasattr(q, "_reader") for q in rollout_queues)
+        else None
+    )
     time_waited_for_workers_since_last_tensorboard_write = 0
     time_training_since_last_tensorboard_write = 0
     time_testing_since_last_tensorboard_write = 0
@@ -237,25 +266,20 @@ def learner_process_fn(
 
     while True:  # Trainer loop
         before_wait_time = time.perf_counter()
-        wait(rollout_queue_readers)
+        (
+            rollout_results,
+            end_race_stats,
+            fill_buffer,
+            is_explo,
+            map_name,
+            map_status,
+            rollout_duration,
+            loop_number,
+        ) = _get_next_rollout_payload(rollout_queues, rollout_queue_readers, queue_check_order)
         time_waited = time.perf_counter() - before_wait_time
         if time_waited > 1:
             print(f"Warning: learner waited {time_waited:.2f} seconds for workers to provide memories")
         time_waited_for_workers_since_last_tensorboard_write += time_waited
-        for idx in queue_check_order:
-            if not rollout_queues[idx].empty():
-                (
-                    rollout_results,
-                    end_race_stats,
-                    fill_buffer,
-                    is_explo,
-                    map_name,
-                    map_status,
-                    rollout_duration,
-                    loop_number,
-                ) = rollout_queues[idx].get()
-                queue_check_order.append(queue_check_order.pop(queue_check_order.index(idx)))
-                break
 
         importlib.reload(config_copy)
 
@@ -330,6 +354,7 @@ def learner_process_fn(
         # ===============================================
         #   WRITE SINGLE RACE RESULTS TO TENSORBOARD
         # ===============================================
+        q_values = np.asarray(rollout_results["q_values"])
         race_stats_to_write = {
             f"race_time_ratio_{map_name}": end_race_stats["race_time_for_ratio"] / (rollout_duration * 1000),
             f"explo_race_time_{map_status}_{map_name}" if is_explo else f"eval_race_time_{map_status}_{map_name}": end_race_stats[
@@ -339,9 +364,7 @@ def learner_process_fn(
             f"explo_race_finished_{map_status}_{map_name}" if is_explo else f"eval_race_finished_{map_status}_{map_name}": end_race_stats[
                 "race_finished"
             ],
-            f"mean_action_gap_{map_name}": -(
-                np.array(rollout_results["q_values"]) - np.array(rollout_results["q_values"]).max(axis=1, initial=None).reshape(-1, 1)
-            ).mean(),
+            f"mean_action_gap_{map_name}": -(q_values - q_values.max(axis=1, keepdims=True)).mean(),
             f"single_zone_reached_{map_status}_{map_name}": rollout_results["furthest_zone_idx"],
             "instrumentation__answer_normal_step": end_race_stats["instrumentation__answer_normal_step"],
             "instrumentation__answer_action_step": end_race_stats["instrumentation__answer_action_step"],

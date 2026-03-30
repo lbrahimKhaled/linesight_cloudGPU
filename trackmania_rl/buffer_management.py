@@ -102,11 +102,10 @@ def fill_buffer_from_rollout_with_n_steps_rule(
 
         n_steps = min(n_steps_max, n_frames - 1 - i)
         if discard_non_greedy_actions_in_nsteps:
-            try:
-                first_non_greedy = rollout_results["action_was_greedy"][i + 1 : i + n_steps].index(False) + 1
-                n_steps = min(n_steps, first_non_greedy)
-            except ValueError:
-                pass
+            action_was_greedy_window = np.asarray(rollout_results["action_was_greedy"][i + 1 : i + n_steps], dtype=np.bool_)
+            non_greedy_offsets = np.flatnonzero(~action_was_greedy_window)
+            if non_greedy_offsets.size > 0:
+                n_steps = min(n_steps, int(non_greedy_offsets[0]) + 1)
 
         rewards = np.empty(n_steps_max).astype(np.float32)
         for j in range(n_steps):

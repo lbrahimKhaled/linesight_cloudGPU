@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import io
 import pickle
+import queue
 import socket
 import struct
 import threading
@@ -22,13 +23,15 @@ _HEADER = struct.Struct("!Q")
 
 
 def _recv_exact(sock: socket.socket, length: int) -> bytes:
-    chunks = bytearray()
-    while len(chunks) < length:
-        data = sock.recv(length - len(chunks))
-        if not data:
+    buffer = bytearray(length)
+    view = memoryview(buffer)
+    bytes_received = 0
+    while bytes_received < length:
+        received_now = sock.recv_into(view[bytes_received:])
+        if received_now == 0:
             raise EOFError("Socket closed while receiving a message.")
-        chunks.extend(data)
-    return bytes(chunks)
+        bytes_received += received_now
+    return buffer
 
 
 def _send_message(sock: socket.socket, payload: Any):
@@ -52,6 +55,25 @@ def _deserialize_state_dict(state_dict_bytes: bytes) -> dict:
     return torch.load(io.BytesIO(state_dict_bytes), map_location="cpu", weights_only=False)
 
 
+def _pad_rollout_frames(frames, target_length: int) -> np.ndarray:
+    stacked_frames = np.ascontiguousarray(np.stack(frames))
+    if stacked_frames.shape[0] == target_length:
+        return stacked_frames
+
+    padded_frames = np.zeros((target_length, *stacked_frames.shape[1:]), dtype=stacked_frames.dtype)
+    padded_frames[: stacked_frames.shape[0]] = stacked_frames
+    return padded_frames
+
+
+def _pad_rollout_scalars(values, target_length: int, dtype, pad_value) -> np.ndarray:
+    padded_values = np.empty(target_length, dtype=dtype)
+    packed_values = np.asarray(values, dtype=dtype)
+    padded_values[: len(packed_values)] = packed_values
+    if len(packed_values) < target_length:
+        padded_values[len(packed_values) :] = pad_value
+    return padded_values
+
+
 def _pack_rollout_payload(payload):
     rollout_results, end_race_stats, fill_buffer, is_explo, map_name, map_status, rollout_duration, loop_number = payload
 
@@ -60,21 +82,34 @@ def _pack_rollout_payload(payload):
     if actual_frame_count <= 0:
         return payload
 
+    transport_frame_count = actual_frame_count + int(race_finished)
     packed_rollout_results = {
-        "_packed_transport_v1": True,
+        "_packed_transport_version": 2,
         "furthest_zone_idx": rollout_results["furthest_zone_idx"],
-        "race_time": rollout_results.get("race_time"),
-        "current_zone_idx": np.asarray(rollout_results["current_zone_idx"], dtype=np.int32),
-        "frames": np.ascontiguousarray(np.stack(rollout_results["frames"][:actual_frame_count])),
-        "actions": np.asarray(rollout_results["actions"][:actual_frame_count], dtype=np.int32),
-        "action_was_greedy": np.asarray(rollout_results["action_was_greedy"][:actual_frame_count], dtype=np.bool_),
-        "meters_advanced_along_centerline": np.asarray(
+        "worker_time_in_rollout_percentage": rollout_results["worker_time_in_rollout_percentage"],
+        "current_zone_idx": np.ascontiguousarray(np.asarray(rollout_results["current_zone_idx"], dtype=np.int32)),
+        "frames": _pad_rollout_frames(rollout_results["frames"][:actual_frame_count], transport_frame_count),
+        "actions": _pad_rollout_scalars(
+            rollout_results["actions"][:actual_frame_count],
+            transport_frame_count,
+            np.int32,
+            -1,
+        ),
+        "action_was_greedy": _pad_rollout_scalars(
+            rollout_results["action_was_greedy"][:actual_frame_count],
+            transport_frame_count,
+            np.bool_,
+            False,
+        ),
+        "meters_advanced_along_centerline": np.ascontiguousarray(np.asarray(
             rollout_results["meters_advanced_along_centerline"],
             dtype=np.float32,
-        ),
+        )),
         "state_float": np.ascontiguousarray(np.asarray(rollout_results["state_float"], dtype=np.float32)),
         "q_values": np.ascontiguousarray(np.asarray(rollout_results["q_values"], dtype=np.float32)),
     }
+    if race_finished:
+        packed_rollout_results["race_time"] = rollout_results["race_time"]
 
     return (
         packed_rollout_results,
@@ -90,6 +125,10 @@ def _pack_rollout_payload(payload):
 
 def _unpack_rollout_payload(payload):
     rollout_results, end_race_stats, fill_buffer, is_explo, map_name, map_status, rollout_duration, loop_number = payload
+    transport_version = rollout_results.get("_packed_transport_version")
+    if transport_version == 2:
+        return payload
+
     if not rollout_results.get("_packed_transport_v1"):
         return payload
 
@@ -112,6 +151,7 @@ def _unpack_rollout_payload(payload):
         "meters_advanced_along_centerline": rollout_results["meters_advanced_along_centerline"],
         "state_float": rollout_results["state_float"],
         "furthest_zone_idx": rollout_results["furthest_zone_idx"],
+        "worker_time_in_rollout_percentage": rollout_results["worker_time_in_rollout_percentage"],
     }
 
     if race_finished:
@@ -260,16 +300,36 @@ class RemoteCollectorSession:
         self.connect_timeout_s = connect_timeout_s
         self.request_timeout_s = request_timeout_s
         self.sock = None
+        self._submit_sock = None
         self._next_rollout_id = 0
         self._last_shared_steps = 0
+        self._submit_queue = queue.Queue(maxsize=2)
+        self._stop_event = threading.Event()
+        self._submit_thread = threading.Thread(
+            target=self._submit_loop,
+            name=f"remote-rollout-submit-{collector_name}",
+            daemon=True,
+        )
+        self._submit_thread.start()
 
     def close(self):
-        if self.sock is not None:
+        self._stop_event.set()
+        try:
+            self._submit_queue.put_nowait(None)
+        except queue.Full:
+            pass
+        self._close_socket("control")
+        self._close_socket("submit")
+
+    def _close_socket(self, channel: str):
+        socket_name = "sock" if channel == "control" else "_submit_sock"
+        sock = getattr(self, socket_name)
+        if sock is not None:
             try:
-                self.sock.close()
+                sock.close()
             except OSError:
                 pass
-            self.sock = None
+            setattr(self, socket_name, None)
 
     def wait_for_initial_weights(self):
         while True:
@@ -295,17 +355,10 @@ class RemoteCollectorSession:
     def submit_rollout(self, payload):
         rollout_id = f"{self.collector_name}:{self._next_rollout_id}"
         self._next_rollout_id += 1
-        self._request(
-            {
-                "type": "submit_rollout",
-                "rollout_id": rollout_id,
-                "payload": _pack_rollout_payload(payload),
-            },
-            max_attempts=None,
-        )
+        self._submit_queue.put((rollout_id, payload))
 
-    def _connect(self):
-        self.close()
+    def _connect(self, channel: str):
+        self._close_socket(channel)
         sock = socket.create_connection((self.host, self.port), timeout=self.connect_timeout_s)
         sock.settimeout(self.request_timeout_s)
         sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
@@ -321,22 +374,43 @@ class RemoteCollectorSession:
         if not response.get("ok"):
             sock.close()
             raise RuntimeError("Authentication to remote learner failed.")
-        self.sock = sock
+        if channel == "control":
+            self.sock = sock
+        else:
+            self._submit_sock = sock
 
-    def _request(self, payload, max_attempts: int | None = 2):
+    def _request(self, payload, max_attempts: int | None = 2, channel: str = "control"):
         attempts = 0
+        socket_name = "sock" if channel == "control" else "_submit_sock"
         while True:
             attempts += 1
             try:
-                if self.sock is None:
-                    self._connect()
-                _send_message(self.sock, payload)
-                response = _recv_message(self.sock)
+                if getattr(self, socket_name) is None:
+                    self._connect(channel)
+                current_sock = getattr(self, socket_name)
+                _send_message(current_sock, payload)
+                response = _recv_message(current_sock)
                 if not response.get("ok", False):
                     raise RuntimeError(response.get("error", "Unknown remote learner error"))
                 return response
             except (EOFError, OSError):
-                self.close()
+                self._close_socket(channel)
                 if max_attempts is not None and attempts >= max_attempts:
                     raise
                 time.sleep(1)
+
+    def _submit_loop(self):
+        while not self._stop_event.is_set():
+            queued_item = self._submit_queue.get()
+            if queued_item is None:
+                return
+            rollout_id, payload = queued_item
+            self._request(
+                {
+                    "type": "submit_rollout",
+                    "rollout_id": rollout_id,
+                    "payload": _pack_rollout_payload(payload),
+                },
+                max_attempts=None,
+                channel="submit",
+            )

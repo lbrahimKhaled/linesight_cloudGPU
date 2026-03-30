@@ -4,6 +4,7 @@ Run the learner on one machine and accept remote collectors over TCP.
 
 import argparse
 import ctypes
+import queue
 import shutil
 from pathlib import Path
 
@@ -43,7 +44,7 @@ if __name__ == "__main__":
 
     shared_steps = mp.Value(ctypes.c_int64)
     shared_steps.value = 0
-    rollout_queue = mp.Queue(max(1, config_copy.gpu_collectors_count * config_copy.max_rollout_queue_size))
+    rollout_queue = queue.Queue(max(1, config_copy.gpu_collectors_count * config_copy.max_rollout_queue_size))
 
     hub = RemoteLearnerHub(rollout_queue=rollout_queue, auth_token=args.auth_token)
     hub.start(args.host, args.port)
