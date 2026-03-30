@@ -13,6 +13,7 @@ import time
 from collections import deque
 from typing import Any
 
+import numpy as np
 import torch
 
 from trackmania_rl.device import state_dict_to_cpu
@@ -49,6 +50,83 @@ def _serialize_state_dict(state_dict: dict) -> bytes:
 
 def _deserialize_state_dict(state_dict_bytes: bytes) -> dict:
     return torch.load(io.BytesIO(state_dict_bytes), map_location="cpu", weights_only=False)
+
+
+def _pack_rollout_payload(payload):
+    rollout_results, end_race_stats, fill_buffer, is_explo, map_name, map_status, rollout_duration, loop_number = payload
+
+    race_finished = "race_time" in rollout_results
+    actual_frame_count = len(rollout_results["frames"]) - int(race_finished)
+    if actual_frame_count <= 0:
+        return payload
+
+    packed_rollout_results = {
+        "_packed_transport_v1": True,
+        "furthest_zone_idx": rollout_results["furthest_zone_idx"],
+        "race_time": rollout_results.get("race_time"),
+        "current_zone_idx": np.asarray(rollout_results["current_zone_idx"], dtype=np.int32),
+        "frames": np.ascontiguousarray(np.stack(rollout_results["frames"][:actual_frame_count])),
+        "actions": np.asarray(rollout_results["actions"][:actual_frame_count], dtype=np.int32),
+        "action_was_greedy": np.asarray(rollout_results["action_was_greedy"][:actual_frame_count], dtype=np.bool_),
+        "meters_advanced_along_centerline": np.asarray(
+            rollout_results["meters_advanced_along_centerline"],
+            dtype=np.float32,
+        ),
+        "state_float": np.ascontiguousarray(np.asarray(rollout_results["state_float"], dtype=np.float32)),
+        "q_values": np.ascontiguousarray(np.asarray(rollout_results["q_values"], dtype=np.float32)),
+    }
+
+    return (
+        packed_rollout_results,
+        end_race_stats,
+        fill_buffer,
+        is_explo,
+        map_name,
+        map_status,
+        rollout_duration,
+        loop_number,
+    )
+
+
+def _unpack_rollout_payload(payload):
+    rollout_results, end_race_stats, fill_buffer, is_explo, map_name, map_status, rollout_duration, loop_number = payload
+    if not rollout_results.get("_packed_transport_v1"):
+        return payload
+
+    race_finished = rollout_results["race_time"] is not None
+    frames = [frame for frame in rollout_results["frames"]]
+    actions = rollout_results["actions"].tolist()
+    action_was_greedy = rollout_results["action_was_greedy"].tolist()
+
+    if race_finished:
+        frames.append(np.nan)
+        actions.append(np.nan)
+        action_was_greedy.append(np.nan)
+
+    unpacked_rollout_results = {
+        "current_zone_idx": rollout_results["current_zone_idx"],
+        "frames": frames,
+        "actions": actions,
+        "action_was_greedy": action_was_greedy,
+        "q_values": rollout_results["q_values"],
+        "meters_advanced_along_centerline": rollout_results["meters_advanced_along_centerline"],
+        "state_float": rollout_results["state_float"],
+        "furthest_zone_idx": rollout_results["furthest_zone_idx"],
+    }
+
+    if race_finished:
+        unpacked_rollout_results["race_time"] = rollout_results["race_time"]
+
+    return (
+        unpacked_rollout_results,
+        end_race_stats,
+        fill_buffer,
+        is_explo,
+        map_name,
+        map_status,
+        rollout_duration,
+        loop_number,
+    )
 
 
 class RemoteLearnerHub:
@@ -151,7 +229,7 @@ class RemoteLearnerHub:
                                     oldest_rollout_id = self._seen_rollout_ids_order.popleft()
                                     self._seen_rollout_ids.discard(oldest_rollout_id)
                     if should_enqueue:
-                        self.rollout_queue.put(request["payload"])
+                        self.rollout_queue.put(_unpack_rollout_payload(request["payload"]))
                     _send_message(conn, {"ok": True})
                 else:
                     _send_message(conn, {"ok": False, "error": f"Unsupported request: {request_type}"})
@@ -221,7 +299,7 @@ class RemoteCollectorSession:
             {
                 "type": "submit_rollout",
                 "rollout_id": rollout_id,
-                "payload": payload,
+                "payload": _pack_rollout_payload(payload),
             },
             max_attempts=None,
         )
