@@ -231,7 +231,7 @@ class Trainer:
         """
         self.optimizer.zero_grad(set_to_none=True)
 
-        with torch.amp.autocast(device_type="cuda", dtype=torch.float16):
+        with torch.amp.autocast(device_type="cpu", dtype=torch.float16):
             with torch.no_grad():
                 batch, batch_info = buffer.sample(self.batch_size, return_info=True)
                 (
@@ -244,7 +244,7 @@ class Trainer:
                     gammas_terminal,
                 ) = batch
                 if config_copy.prio_alpha > 0:
-                    IS_weights = torch.from_numpy(batch_info["_weight"]).to("cuda", non_blocking=True)
+                    IS_weights = torch.from_numpy(batch_info["_weight"]).to("cpu", non_blocking=True)
 
                 rewards = rewards.unsqueeze(-1).repeat(
                     [self.iqn_n, 1]
@@ -390,7 +390,7 @@ class Inferer:
                     state_img_tensor,
                     state_float_tensor,
                     self.iqn_k,
-                    tau=tau,  # torch.linspace(0.05, 0.95, self.iqn_k, device="cuda")[:, None],
+                    tau=tau,  # torch.linspace(0.05, 0.95, self.iqn_k, device="cpu")[:, None],
                 )[0]
                 .cpu()
                 .numpy()
