@@ -170,8 +170,8 @@ use_jit = False
 # We recommend trying different values and finding the one that maximises the number of batches done per unit of time.
 gpu_collectors_count = 1
 
-send_shared_network_every_n_batches = 10
-update_inference_network_every_n_actions = 20
+send_shared_network_every_n_batches = 50  # Increased from 10 to reduce CPU load from weight serialization
+update_inference_network_every_n_actions = 100  # Increased from 20 to reduce inference network sync frequency
 
 target_self_loss_clamp_ratio = 4
 

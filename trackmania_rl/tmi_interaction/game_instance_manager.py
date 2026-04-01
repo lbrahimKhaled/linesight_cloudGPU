@@ -134,6 +134,7 @@ class GameInstanceManager:
 
         if config_copy.is_linux:
             self.tm_window_id = None
+            window_search_attempts = 0
             while self.tm_window_id is None:  # This outer while is for the edge case where the window may not have had time to be launched
                 window_search_depth = 1
                 while True:  # This inner while is to try and find the right depth of the window in Xdo().search_windows()
@@ -154,6 +155,12 @@ class GameInstanceManager:
                         )
                         break
                     window_search_depth += 1
+                if self.tm_window_id is None:
+                    window_search_attempts += 1
+                    if window_search_attempts > 100:  # Give up after ~1 second
+                        print("Error: Could not find Trackmania window after 100 attempts")
+                        break
+                    time.sleep(0.01)  # Sleep 10ms to avoid busy-spinning while waiting for window
         else:
 
             def get_hwnds_for_pid(pid):
@@ -173,6 +180,7 @@ class GameInstanceManager:
                     if win32gui.GetWindowText(hwnd).startswith("Track"):
                         self.tm_window_id = hwnd
                         return
+                time.sleep(0.01)  # Sleep 10ms to avoid busy-spinning while waiting for window
                 # else:
                 #     raise Exception("Could not find TmForever window id.")
 
@@ -198,6 +206,7 @@ class GameInstanceManager:
                 if len(tmi_pid_candidates) > 0:
                     assert len(tmi_pid_candidates) == 1
                     break
+                time.sleep(0.01)  # Sleep 10ms to avoid busy-spinning while waiting for process
             self.tm_process_id = list(tmi_pid_candidates)[0]
         else:
             launch_string = (
@@ -229,7 +238,7 @@ class GameInstanceManager:
         self.latest_map_path_requested = -1
         self.msgtype_response_to_wakeup_TMI = None
         while not self.is_game_running():
-            time.sleep(0)
+            time.sleep(0.01)  # Sleep 10ms instead of busy-spinning
 
         self.get_tm_window_id()
 
@@ -245,7 +254,7 @@ class GameInstanceManager:
         else:
             os.system(f"taskkill /PID {self.tm_process_id} /f")
         while self.is_game_running():
-            time.sleep(0)
+            time.sleep(0.01)  # Sleep 10ms instead of busy-spinning
 
     def ensure_game_launched(self):
         if not self.is_game_running():
@@ -334,6 +343,7 @@ class GameInstanceManager:
                     if current_time - last_connection_error_message_time > 1:
                         print(f"Connection to TMInterface unsuccessful for {current_time - connection_attempts_start_time:.1f}s")
                         last_connection_error_message_time = current_time
+                    time.sleep(0.1)  # Sleep 100ms between connection attempts to reduce CPU usage
         else:
             assert self.msgtype_response_to_wakeup_TMI is not None or self.last_rollout_crashed
 
