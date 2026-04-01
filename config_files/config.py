@@ -41,9 +41,9 @@ n_zone_centers_extrapolate_before_start_of_map = 20
 n_prev_actions_in_inputs = 5
 n_contact_material_physics_behavior_types = 4  # See contact_materials.py
 cutoff_rollout_if_race_not_finished_within_duration_ms = 300_000
-cutoff_rollout_if_no_vcp_passed_within_duration_ms = 6_000
+cutoff_rollout_if_no_vcp_passed_within_duration_ms = 10_000
 
-temporal_mini_race_duration_ms = 12000
+temporal_mini_race_duration_ms = 15000
 temporal_mini_race_duration_actions = temporal_mini_race_duration_ms // ms_per_action
 oversample_long_term_steps = 40
 oversample_maximum_term_steps = 5
