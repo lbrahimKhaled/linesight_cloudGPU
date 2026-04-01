@@ -29,7 +29,7 @@ W_downsized = 160
 H_downsized = 120
 
 run_name = "run_name_to_be_changed"
-running_speed = 200
+running_speed = 160
 
 tm_engine_step_per_action = 5
 ms_per_tm_engine_step = 10
@@ -148,7 +148,7 @@ distance_between_checkpoints = 0.5
 road_width = 90  ## a little bit of margin, could be closer to 24 probably ? Don't take risks there are curvy roads
 max_allowable_distance_to_virtual_checkpoint = np.sqrt((distance_between_checkpoints / 2) ** 2 + (road_width / 2) ** 2)
 
-timeout_during_run_ms = 10_100
+timeout_during_run_ms = 20_000
 timeout_between_runs_ms = 600_000_000
 tmi_protection_timeout_s = 500
 game_reboot_interval = 3600 * 12  # In seconds
