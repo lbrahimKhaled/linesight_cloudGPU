@@ -29,7 +29,7 @@ W_downsized = 160
 H_downsized = 120
 
 run_name = "run_name_to_be_changed"
-running_speed = 130  # Reduced from 160 for moderate GPU load reduction
+running_speed = 80  # Reduced from 160 to generate data slower
 
 tm_engine_step_per_action = 5
 ms_per_tm_engine_step = 10
@@ -126,7 +126,7 @@ gamma_schedule = [
     (2_500_000, 1),
 ]
 
-batch_size = 384  # Reduced from 512 for moderate GPU load reduction
+batch_size = 256  # Reduced from 512 to lower GPU load significantly
 weight_decay_lr_ratio = 1 / 50
 adam_epsilon = 1e-4
 adam_beta1 = 0.9
@@ -170,8 +170,8 @@ use_jit = False
 # We recommend trying different values and finding the one that maximises the number of batches done per unit of time.
 gpu_collectors_count = 1
 
-send_shared_network_every_n_batches = 32  # Moderate increase from 10 to reduce CPU load
-update_inference_network_every_n_actions = 50  # Moderate increase from 20 to reduce sync frequency
+send_shared_network_every_n_batches = 64  # Increased to reduce CPU/GPU sync overhead
+update_inference_network_every_n_actions = 100  # Increased to reduce update frequency
 
 target_self_loss_clamp_ratio = 4
 
