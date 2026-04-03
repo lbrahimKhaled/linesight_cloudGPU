@@ -196,6 +196,8 @@ def collector_process_fn(
                     rollout_queue.put(
                         payload
                     )
+            if config_copy.collector_post_rollout_sleep_s > 0:
+                time.sleep(config_copy.collector_post_rollout_sleep_s)
     finally:
         if remote_session is not None:
             remote_session.close()
