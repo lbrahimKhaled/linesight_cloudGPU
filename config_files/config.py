@@ -30,6 +30,7 @@ H_downsized = 120
 
 run_name = "run_name_to_be_changed"
 running_speed = 60  # Reduced to lower collector/learner pressure in split mode
+collector_post_rollout_sleep_s = 0.05  # Extra pacing between rollouts to reduce sustained learner/GPU pressure
 
 tm_engine_step_per_action = 5
 ms_per_tm_engine_step = 10
@@ -87,7 +88,7 @@ reward_per_m_advanced_along_centerline = 5 / 500
 float_input_dim = 27 + 3 * n_zone_centers_in_inputs + 4 * n_prev_actions_in_inputs + 4 * n_contact_material_physics_behavior_types + 1
 float_hidden_dim = 256
 conv_head_output_dim = 5632
-dense_hidden_dimension = 768
+dense_hidden_dimension = 1024 # was 768
 iqn_embedding_dimension = 64
 iqn_n = 8  # must be an even number because we sample tau symmetrically around 0.5
 iqn_k = 24  # must be an even number because we sample tau symmetrically around 0.5
