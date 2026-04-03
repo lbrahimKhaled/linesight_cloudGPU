@@ -28,7 +28,7 @@ from config_files.user_config import *
 W_downsized = 160
 H_downsized = 120
 
-run_name = "run_name_to_be_changed"
+run_name = "other_good"
 running_speed = 60  # Reduced to lower collector/learner pressure in split mode
 collector_post_rollout_sleep_s = 0.05  # Extra pacing between rollouts to reduce sustained learner/GPU pressure
 
