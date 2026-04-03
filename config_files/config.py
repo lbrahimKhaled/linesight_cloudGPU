@@ -29,7 +29,7 @@ W_downsized = 160
 H_downsized = 120
 
 run_name = "run_name_to_be_changed"
-running_speed = 80  # Reduced from 160 to generate data slower
+running_speed = 60  # Reduced to lower collector/learner pressure in split mode
 
 tm_engine_step_per_action = 5
 ms_per_tm_engine_step = 10
@@ -40,8 +40,8 @@ n_zone_centers_extrapolate_after_end_of_map = 1000
 n_zone_centers_extrapolate_before_start_of_map = 20
 n_prev_actions_in_inputs = 5
 n_contact_material_physics_behavior_types = 4  # See contact_materials.py
-cutoff_rollout_if_race_not_finished_within_duration_ms = 300_000
-cutoff_rollout_if_no_vcp_passed_within_duration_ms = 20_000  # Increased from 10s to give agent more time to learn
+cutoff_rollout_if_race_not_finished_within_duration_ms = 45_000
+cutoff_rollout_if_no_vcp_passed_within_duration_ms = 9_000  # Expected next CP ~6s, allow margin
 
 temporal_mini_race_duration_ms = 15000
 temporal_mini_race_duration_actions = temporal_mini_race_duration_ms // ms_per_action
@@ -87,10 +87,10 @@ reward_per_m_advanced_along_centerline = 5 / 500
 float_input_dim = 27 + 3 * n_zone_centers_in_inputs + 4 * n_prev_actions_in_inputs + 4 * n_contact_material_physics_behavior_types + 1
 float_hidden_dim = 256
 conv_head_output_dim = 5632
-dense_hidden_dimension = 1024
+dense_hidden_dimension = 768
 iqn_embedding_dimension = 64
 iqn_n = 8  # must be an even number because we sample tau symmetrically around 0.5
-iqn_k = 32  # must be an even number because we sample tau symmetrically around 0.5
+iqn_k = 24  # must be an even number because we sample tau symmetrically around 0.5
 iqn_kappa = 5e-3
 use_ddqn = False
 
@@ -98,7 +98,7 @@ prio_alpha = np.float32(0)  # Rainbow-IQN paper: 0.2, Rainbow paper: 0.5, PER pa
 prio_epsilon = np.float32(2e-3)  # Defaults to 10^-6 in stable-baselines
 prio_beta = np.float32(1)
 
-number_times_single_memory_is_used_before_discard = 32  # 32 // 4
+number_times_single_memory_is_used_before_discard = 24  # Lower reuse to reduce sustained learner load
 
 memory_size_schedule = [
     (0, (50_000, 20_000)),
@@ -126,7 +126,7 @@ gamma_schedule = [
     (2_500_000, 1),
 ]
 
-batch_size = 256  # Reduced from 512 to lower GPU load significantly
+batch_size = 128  # Further reduced to keep GPU utilization stable on Apple M-series
 weight_decay_lr_ratio = 1 / 50
 adam_epsilon = 1e-4
 adam_beta1 = 0.9
@@ -170,8 +170,8 @@ use_jit = False
 # We recommend trying different values and finding the one that maximises the number of batches done per unit of time.
 gpu_collectors_count = 1
 
-send_shared_network_every_n_batches = 64  # Increased to reduce CPU/GPU sync overhead
-update_inference_network_every_n_actions = 100  # Increased to reduce update frequency
+send_shared_network_every_n_batches = 96  # Reduce synchronization frequency with collectors
+update_inference_network_every_n_actions = 120  # Reduce collector-side network update overhead
 
 target_self_loss_clamp_ratio = 4
 
